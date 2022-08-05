@@ -15,7 +15,7 @@ for (seed, node, deg, expon, simple) in itertools.product(seeds, nodes, degrees,
     if deg == 1 and simple:
         continue
 
-    filename = Path("logs") / algo / ("n%d_d%d_s%d_e%d.log" % (node, deg, simple, math.floor(expon * 10)))
+    filename = Path("logs") / algo / ("n%d_d%d_s%d_e%d-%d.log" % (node, deg, simple, math.floor(expon * 10), seed))
 
     if algo == "dyn" or algo == "polypa":
         cmd = "target/release/rust-nlpa -a %s -s %d -n %d -d %d -e %f" % (algo, seed, node, deg, expon)
