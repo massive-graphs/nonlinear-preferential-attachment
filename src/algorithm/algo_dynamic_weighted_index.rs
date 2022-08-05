@@ -3,19 +3,25 @@ use super::*;
 use rand::distributions::Distribution;
 
 pub struct AlgoDynamicWeightedIndex {
-    num_seed_nodes : Node,
-    num_rand_nodes : Node,
+    num_seed_nodes: Node,
+    num_rand_nodes: Node,
     initial_degree: Node,
     without_replacement: bool,
 
-    degrees : Vec<Node>,
-    dyn_index : ::dynamic_weighted_index::DynamicWeightedIndex,
+    degrees: Vec<Node>,
+    dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex,
 
-    weight_function : WeightFunction,
+    weight_function: WeightFunction,
 }
 
 impl Algorithm for AlgoDynamicWeightedIndex {
-    fn new(num_seed_nodes: Node, num_rand_nodes: Node, initial_degree: Node, without_replacement: bool, weight_function: WeightFunction) -> Self {
+    fn new(
+        num_seed_nodes: Node,
+        num_rand_nodes: Node,
+        initial_degree: Node,
+        without_replacement: bool,
+        weight_function: WeightFunction,
+    ) -> Self {
         Self {
             num_seed_nodes,
             num_rand_nodes,
@@ -23,22 +29,23 @@ impl Algorithm for AlgoDynamicWeightedIndex {
             without_replacement,
             weight_function,
 
-            degrees: vec![ 0 ; num_seed_nodes + num_rand_nodes],
-            dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex::new( num_seed_nodes + num_rand_nodes),
+            degrees: vec![0; num_seed_nodes + num_rand_nodes],
+            dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex::new(
+                num_seed_nodes + num_rand_nodes,
+            ),
         }
     }
 
-    fn set_seed_graph(&mut self, edges: impl Iterator<Item=Edge>) {
-        for (u, v) in edges {
-            self.increase_degree(u);
-            self.increase_degree(v);
+    fn set_seed_graph_degrees(&mut self, degrees: impl Iterator<Item = Node>) {
+        for (u, degree) in degrees.enumerate() {
+            self.set_degree(u as Node, degree);
         }
     }
 
-    fn run(&mut self, rng : &mut impl Rng, writer: &mut impl EdgeWriter) {
+    fn run(&mut self, rng: &mut impl Rng, writer: &mut impl EdgeWriter) {
         let mut hosts = vec![0; self.initial_degree as usize];
 
-        for new_node in self.num_seed_nodes .. (self.num_seed_nodes + self.num_rand_nodes) {
+        for new_node in self.num_seed_nodes..(self.num_seed_nodes + self.num_rand_nodes) {
             for h in &mut hosts {
                 *h = self.dyn_index.sample(rng).unwrap();
                 if self.without_replacement && self.initial_degree > 1 {
@@ -58,12 +65,13 @@ impl Algorithm for AlgoDynamicWeightedIndex {
 }
 
 impl AlgoDynamicWeightedIndex {
-    fn set_degree(&mut self, node : Node, degree: Node) {
+    fn set_degree(&mut self, node: Node, degree: Node) {
         self.degrees[node as usize] = degree;
-        self.dyn_index.set_weight(node as usize, self.weight_function.get(degree));
+        self.dyn_index
+            .set_weight(node as usize, self.weight_function.get(degree));
     }
 
-    fn increase_degree(&mut self, node : Node) {
+    fn increase_degree(&mut self, node: Node) {
         self.set_degree(node, self.degrees[node as usize] + 1);
     }
 }

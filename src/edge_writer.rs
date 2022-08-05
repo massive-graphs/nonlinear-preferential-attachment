@@ -1,4 +1,6 @@
 use super::*;
+use itertools::Itertools;
+use std::io::Write;
 
 pub trait EdgeWriter {
     fn add_edge(&mut self, u: Node, v: Node);
@@ -37,6 +39,34 @@ impl DegreeCount {
 
     pub fn degrees(&self) -> &[usize] {
         &self.degrees
+    }
+
+    pub fn number_of_edges(&self) -> usize {
+        self.number_of_edges
+    }
+
+    pub fn degree_distribution(&self) -> Vec<(usize, usize)> {
+        let mut counts = self
+            .degrees
+            .iter()
+            .copied()
+            .counts()
+            .into_iter()
+            .collect_vec();
+        counts.sort_unstable();
+        counts
+    }
+
+    pub fn report_distribution(&self, writer: &mut impl Write) -> std::io::Result<()> {
+        let degree_distr = self.degree_distribution();
+        writer.write_all(
+            degree_distr
+                .iter()
+                .map(|&(d, n)| format!("#DD {:>10}, {:>10}\n", d, n))
+                .join("")
+                .as_bytes(),
+        )?;
+        Ok(())
     }
 }
 

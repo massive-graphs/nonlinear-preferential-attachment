@@ -9,5 +9,6 @@ edition = "2021"
 rand = "0.8"
 pcg_rand = "0.13"
 structopt = "0.3"
+itertools = "0.10"
 dynamic-weighted-index = { path = "../dynamic-weighted-index" }
 
