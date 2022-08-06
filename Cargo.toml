@@ -12,3 +12,5 @@ structopt = "0.3"
 itertools = "0.10"
 dynamic-weighted-index = { path = "../dynamic-weighted-index" }
 
+[profile.release]
+debug = true

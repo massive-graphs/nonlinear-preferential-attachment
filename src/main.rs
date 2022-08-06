@@ -24,28 +24,22 @@ fn execute<T: Algorithm>(opt: &Parameters) {
     let runtime = if opt.report_degree_distribution {
         let mut writer = DegreeCount::new(opt.seed_nodes.unwrap() + opt.nodes);
 
-        let duration = {
-            let start = Instant::now();
-            algorithm.run(&mut rng, &mut writer);
-            start.elapsed()
-        };
-
+        let start = Instant::now();
+        algorithm.run(&mut rng, &mut writer);
         assert_eq!(writer.number_of_edges(), opt.nodes * opt.initial_degree);
+        let duration = start.elapsed();
 
         writer.report_distribution(&mut stdout().lock()).unwrap();
 
         duration
     } else {
         let mut writer = EdgeCounter::default();
+        let start = Instant::now();
 
-        {
-            let start = Instant::now();
-            algorithm.run(&mut rng, &mut writer);
+        algorithm.run(&mut rng, &mut writer);
+        assert_eq!(writer.number_of_edges(), opt.nodes * opt.initial_degree);
 
-            assert_eq!(writer.number_of_edges(), opt.nodes * opt.initial_degree);
-
-            start.elapsed()
-        }
+        start.elapsed()
     };
 
     println!("runtime_s:{}", runtime.as_secs_f64());

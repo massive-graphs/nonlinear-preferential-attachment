@@ -1,12 +1,16 @@
 use super::*;
 use rand::prelude::SliceRandom;
-use std::collections::HashSet;
+use std::cell::Cell;
+use std::intrinsics::prefetch_read_data;
+
+const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct NodeInfo {
     degree: Node,
     count: Node,
     weight: f64,
+    excess: f64,
 }
 
 pub struct AlgoPolyPa {
@@ -23,6 +27,10 @@ pub struct AlgoPolyPa {
     proposal_list: Vec<Node>,
     total_weight: f64,
     wmax: f64,
+    wmax_scaled: f64,
+
+    num_samples: Cell<usize>,
+    num_samples_to_reject: Cell<usize>,
 }
 
 impl Algorithm for AlgoPolyPa {
@@ -43,10 +51,14 @@ impl Algorithm for AlgoPolyPa {
 
             total_weight: 0.0,
             nodes: vec![Default::default(); num_total_nodes],
-            proposal_list: Vec::with_capacity(3 * num_total_nodes),
+            proposal_list: Vec::with_capacity(7 * num_total_nodes / 3),
 
             num_current_nodes: 0,
             wmax: 0.0,
+            wmax_scaled: 0.0,
+
+            num_samples: Cell::new(0),
+            num_samples_to_reject: Cell::new(0),
         }
     }
 
@@ -70,12 +82,13 @@ impl Algorithm for AlgoPolyPa {
     }
 
     fn run(&mut self, rng: &mut impl Rng, writer: &mut impl EdgeWriter) {
-        let mut hosts = HashSet::with_capacity(2 * self.initial_degree);
+        let mut hosts = vec![0; self.initial_degree];
 
         for new_node in self.num_seed_nodes..self.num_total_nodes {
-            for _ in 0..self.initial_degree {
-                let h = self.sample_host(rng, |u| self.without_replacement && hosts.contains(&u));
-                hosts.insert(h);
+            for i in 0..hosts.len() {
+                hosts[i] = self.sample_host(rng, |u| {
+                    self.without_replacement && i > 0 && hosts[0..i].contains(&u)
+                });
             }
 
             self.num_current_nodes = new_node;
@@ -87,9 +100,40 @@ impl Algorithm for AlgoPolyPa {
             }
 
             self.set_degree(new_node, self.initial_degree);
-
-            hosts.clear();
         }
+
+        println!(
+            "Proposals per node: {}",
+            self.proposal_list.len() as f64 / self.num_current_nodes as f64
+        );
+
+        println!(
+            "Samples per host:   {}",
+            self.num_samples.get() as f64
+                / ((self.num_total_nodes - self.num_seed_nodes) * self.initial_degree) as f64
+        );
+
+        println!(
+            "Samples per host tr: {}",
+            self.num_samples_to_reject.get() as f64
+                / ((self.num_total_nodes - self.num_seed_nodes) * self.initial_degree) as f64
+        );
+
+        println!("Wmax: {}", self.wmax);
+
+        println!(
+            "Wmax-real: {:?}",
+            self.nodes
+                .iter()
+                .map(|i| (i.degree, i.weight / i.count as f64))
+                .fold((0, 0.0), |s, x| -> (Node, f64) {
+                    if s.1 > x.1 {
+                        s
+                    } else {
+                        x
+                    }
+                })
+        );
     }
 }
 
@@ -97,15 +141,24 @@ impl AlgoPolyPa {
     fn sample_host(&self, rng: &mut impl Rng, reject_early: impl Fn(Node) -> bool) -> Node {
         debug_assert!(!self.proposal_list.is_empty());
         loop {
+            self.num_samples.update(|x| x + 1);
             let proposal = *self.proposal_list.as_slice().choose(rng).unwrap() as usize;
 
+            unsafe {
+                prefetch_read_data(self.nodes.as_ptr().add(proposal), 2);
+            }
             if reject_early(proposal) {
                 continue;
             }
 
+            self.num_samples_to_reject.update(|x| x + 1);
+
             let info = self.nodes[proposal];
 
-            if rng.gen_bool(info.weight / (info.count as f64) / self.wmax) {
+            let accept = rng.gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
+            //let accept = rng.gen_bool(info.excess / self.wmax);
+
+            if accept {
                 break proposal;
             }
         }
@@ -132,9 +185,10 @@ impl AlgoPolyPa {
             info.count += 1;
         }
 
-        let excess = info.weight / (info.count as f64);
-        if self.wmax < excess {
-            self.wmax = excess;
+        info.excess = info.weight / (info.count as f64);
+        if self.wmax < info.excess {
+            self.wmax = info.excess;
+            self.wmax_scaled = SCALE / info.excess;
         }
     }
 

@@ -1,3 +1,6 @@
+#![feature(cell_update)]
+#![feature(core_intrinsics)]
+
 pub mod algorithm;
 pub mod edge_writer;
 pub mod parameters;
