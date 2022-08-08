@@ -31,6 +31,7 @@ pub struct AlgoPolyPa<R: Rng> {
     wmax_scaled: f64,
 
     num_samples: Cell<usize>,
+    num_resampled: Cell<usize>,
     num_samples_to_reject: Cell<usize>,
 }
 
@@ -64,6 +65,7 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
 
             num_samples: Cell::new(0),
             num_samples_to_reject: Cell::new(0),
+            num_resampled: Cell::new(0),
         }
     }
 
@@ -87,17 +89,68 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
     }
 
     fn run(&mut self, writer: &mut impl EdgeWriter) {
-        let mut hosts = vec![0; self.initial_degree];
+        let mut hosts: Vec<Node> = Vec::with_capacity(self.initial_degree);
+        let mut prev_hosts = Vec::with_capacity(self.initial_degree);
 
         for new_node in self.num_seed_nodes..self.num_total_nodes {
             if self.without_replacement {
-                for i in 0..hosts.len() {
-                    hosts[i] =
-                        self.sample_host(|u| hosts[0..i].contains(&u));
+                if self.resample && !hosts.is_empty() {
+                    prev_hosts.clear();
+                    for &source in &hosts {
+                        prev_hosts.push((source, self.nodes[source].weight));
+                    }
+                    prev_hosts.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+
+                    let mut total_weight = self.total_weight;
+                    let mut hosts_total_weight: f64 = prev_hosts.iter().map(|(_, w)| w).sum();
+
+                    hosts.clear();
+
+                    while hosts.len() < self.initial_degree {
+                        let mut random_weight = self.rng.gen_range(0.0..total_weight);
+
+                        let new_node = if random_weight < hosts_total_weight {
+                            let (index, node, host_weight) = prev_hosts
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find_map(|(i, &(node, host_weight))| {
+                                    if random_weight < host_weight {
+                                        Some((i, node, host_weight))
+                                    } else {
+                                        random_weight -= host_weight;
+                                        None
+                                    }
+                                })
+                                .unwrap();
+
+                            prev_hosts.remove(index);
+                            hosts_total_weight -= host_weight;
+                            total_weight -= host_weight;
+
+                            node
+                        } else {
+                            let new_node = self.sample_host(|u| {
+                                prev_hosts.iter().any(|&(p, _)| p == u) || hosts.contains(&u)
+                            });
+                            total_weight -= self.nodes[new_node].weight;
+                            new_node
+                        };
+
+                        hosts.push(new_node);
+                    }
+                } else {
+                    hosts.clear();
+                    while hosts.len() < self.initial_degree {
+                        let new_node = self.sample_host(|u| hosts.contains(&u));
+                        hosts.push(new_node);
+                    }
                 }
             } else {
-                for h in &mut hosts {
-                    *h = self.sample_host(|_| false);
+                hosts.clear();
+                while hosts.len() < self.initial_degree {
+                    let new_node = self.sample_host(|_| false);
+                    hosts.push(new_node);
                 }
             }
 
@@ -112,21 +165,27 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
             self.set_degree(new_node, self.initial_degree);
         }
 
+        let num_edges_sampled =
+            ((self.num_total_nodes - self.num_seed_nodes) * self.initial_degree) as f64;
+
         println!(
             "Proposals per node: {}",
             self.proposal_list.len() as f64 / self.num_current_nodes as f64
         );
 
         println!(
+            "Resampled: {}",
+            self.num_resampled.get() as f64 / num_edges_sampled
+        );
+
+        println!(
             "Samples per host:   {}",
-            self.num_samples.get() as f64
-                / ((self.num_total_nodes - self.num_seed_nodes) * self.initial_degree) as f64
+            self.num_samples.get() as f64 / num_edges_sampled
         );
 
         println!(
             "Samples per host tr: {}",
-            self.num_samples_to_reject.get() as f64
-                / ((self.num_total_nodes - self.num_seed_nodes) * self.initial_degree) as f64
+            self.num_samples_to_reject.get() as f64 / num_edges_sampled
         );
 
         println!("Wmax: {}", self.wmax);
