@@ -12,8 +12,8 @@ struct NodeInfo {
     excess: f64,
 }
 
-pub struct AlgoPolyPa<R : Rng> {
-    rng : R,
+pub struct AlgoPolyPa<R: Rng> {
+    rng: R,
     num_total_nodes: Node,
     num_seed_nodes: Node,
 
@@ -21,6 +21,7 @@ pub struct AlgoPolyPa<R : Rng> {
 
     initial_degree: Node,
     without_replacement: bool,
+    resample: bool,
     weight_function: WeightFunction,
 
     nodes: Vec<NodeInfo>,
@@ -33,13 +34,14 @@ pub struct AlgoPolyPa<R : Rng> {
     num_samples_to_reject: Cell<usize>,
 }
 
-impl<R : Rng> Algorithm<R> for AlgoPolyPa<R> {
+impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
     fn new(
-        rng : R,
+        rng: R,
         num_seed_nodes: Node,
         num_rand_nodes: Node,
         initial_degree: Node,
         without_replacement: bool,
+        resample: bool,
         weight_function: WeightFunction,
     ) -> Self {
         let num_total_nodes = num_seed_nodes + num_rand_nodes;
@@ -50,6 +52,7 @@ impl<R : Rng> Algorithm<R> for AlgoPolyPa<R> {
             initial_degree,
             without_replacement,
             weight_function,
+            resample,
 
             total_weight: 0.0,
             nodes: vec![Default::default(); num_total_nodes],
@@ -144,7 +147,7 @@ impl<R : Rng> Algorithm<R> for AlgoPolyPa<R> {
     }
 }
 
-impl<R : Rng> AlgoPolyPa<R> {
+impl<R: Rng> AlgoPolyPa<R> {
     fn sample_host(&mut self, reject_early: impl Fn(Node) -> bool) -> Node {
         debug_assert!(!self.proposal_list.is_empty());
         loop {

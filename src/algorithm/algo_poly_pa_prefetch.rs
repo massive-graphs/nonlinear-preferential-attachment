@@ -1,8 +1,10 @@
 use super::*;
-use ringbuffer::{ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferRead, RingBufferWrite};
+use rand_distr::Distribution;
+use ringbuffer::{
+    ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferRead, RingBufferWrite,
+};
 use std::cell::Cell;
 use std::intrinsics::prefetch_read_data;
-use rand_distr::Distribution;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
 
@@ -34,6 +36,7 @@ pub struct AlgoPolyPaPrefetch<R: Rng> {
 
     initial_degree: Node,
     without_replacement: bool,
+    resample: bool,
     weight_function: WeightFunction,
 
     nodes: Vec<NodeInfo>,
@@ -52,6 +55,7 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPaPrefetch<R> {
         num_rand_nodes: Node,
         initial_degree: Node,
         without_replacement: bool,
+        resample: bool,
         weight_function: WeightFunction,
     ) -> Self {
         let num_total_nodes = num_seed_nodes + num_rand_nodes;
@@ -60,6 +64,7 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPaPrefetch<R> {
             num_total_nodes,
             initial_degree,
             without_replacement,
+            resample,
             weight_function,
 
             total_weight: 0.0,
@@ -102,14 +107,12 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPaPrefetch<R> {
         for new_node in self.num_seed_nodes..self.num_total_nodes {
             if self.without_replacement {
                 for i in 0..hosts.len() {
-                    hosts[i] =
-                        self.sample_host(|u| hosts[0..i].contains(&u));
+                    hosts[i] = self.sample_host(|u| hosts[0..i].contains(&u));
                 }
             } else {
                 for h in &mut hosts {
                     *h = self.sample_host(|_| false);
                 }
-
             }
 
             self.num_current_nodes = (new_node + 1) as f64;
@@ -179,7 +182,8 @@ impl<R: Rng> AlgoPolyPaPrefetch<R> {
 
             let info = self.nodes[proposal];
 
-            let accept = self.proposal_list.rng().gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
+            let accept =
+                self.proposal_list.rng().gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
             //let accept = rng.gen_bool(info.excess / self.wmax);
 
             if accept {
@@ -204,7 +208,8 @@ impl<R: Rng> AlgoPolyPaPrefetch<R> {
         let target_count =
             (self.num_current_nodes * info.weight / self.total_weight).ceil() as usize;
 
-        self.proposal_list.push(node, target_count.saturating_sub(info.count));
+        self.proposal_list
+            .push(node, target_count.saturating_sub(info.count));
         info.count = target_count;
 
         info.excess = info.weight / (info.count as f64);
@@ -226,7 +231,7 @@ struct ProposalList<R: Rng> {
     index_buffer: ConstGenericRingBuffer<usize, PREFETCH_LEN>,
     rng: R,
     num_nodes: usize,
-    prefetched_size : usize,
+    prefetched_size: usize,
 }
 
 impl<R: Rng> ProposalList<R> {
@@ -236,7 +241,7 @@ impl<R: Rng> ProposalList<R> {
             num_nodes: 0,
             proposal_list: Vec::with_capacity(capacity),
             index_buffer: Default::default(),
-            prefetched_size : 0,
+            prefetched_size: 0,
         }
     }
 
@@ -295,9 +300,9 @@ impl<R: Rng> ProposalList<R> {
         }
 
         let elements = self.num_nodes + self.proposal_list.len();
-        let geom = rand_distr::Geometric::new(
-            1.0 - (self.prefetched_size as f64) / (elements as f64)
-        ).unwrap();
+        let geom =
+            rand_distr::Geometric::new(1.0 - (self.prefetched_size as f64) / (elements as f64))
+                .unwrap();
 
         let mut buffer_index = -1;
         loop {

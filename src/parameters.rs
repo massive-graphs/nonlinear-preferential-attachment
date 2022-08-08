@@ -31,6 +31,9 @@ pub struct Parameters {
     #[structopt(short = "p", long)]
     pub without_replacement: bool,
 
+    #[structopt(short = "l", long)]
+    pub resample_previous: bool,
+
     #[structopt(short = "r", long)]
     pub report_degree_distribution: bool,
 }

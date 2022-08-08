@@ -10,7 +10,7 @@ use rust_nlpa::algorithm::algo_poly_pa_prefetch::AlgoPolyPaPrefetch;
 use rust_nlpa::algorithm::Algorithm;
 use rust_nlpa::edge_writer::{DegreeCount, EdgeCounter};
 
-fn execute<R : rand::Rng, T: Algorithm<R>>(rng : R, opt: &Parameters) {
+fn execute<R: rand::Rng, T: Algorithm<R>>(rng: R, opt: &Parameters) {
     let mut algorithm = T::from_parameters(rng, opt);
 
     // 1-regular graph

@@ -8,6 +8,7 @@ pub struct AlgoDynamicWeightedIndex<R: Rng> {
     num_rand_nodes: Node,
     initial_degree: Node,
     without_replacement: bool,
+    resample: bool,
 
     degrees: Vec<Node>,
     dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex,
@@ -22,6 +23,7 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
         num_rand_nodes: Node,
         initial_degree: Node,
         without_replacement: bool,
+        resample: bool,
         weight_function: WeightFunction,
     ) -> Self {
         Self {
@@ -31,6 +33,7 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
             initial_degree,
             without_replacement,
             weight_function,
+            resample,
 
             degrees: vec![0; num_seed_nodes + num_rand_nodes],
             dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex::new(

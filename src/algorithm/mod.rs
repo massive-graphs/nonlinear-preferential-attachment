@@ -14,6 +14,7 @@ pub trait Algorithm<R: Rng>: Sized {
         num_rand_nodes: Node,
         initial_degree: Node,
         without_replacement: bool,
+        resample: bool,
         weight_function: WeightFunction,
     ) -> Self;
     fn set_seed_graph_degrees(&mut self, degrees: impl Iterator<Item = Node>);
@@ -28,6 +29,7 @@ pub trait Algorithm<R: Rng>: Sized {
             opt.nodes,
             opt.initial_degree,
             opt.without_replacement,
+            opt.resample_previous,
             weight_function,
         )
     }
