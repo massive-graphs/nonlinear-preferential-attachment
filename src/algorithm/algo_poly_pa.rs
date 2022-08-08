@@ -1,7 +1,6 @@
 use super::*;
 use rand::prelude::SliceRandom;
 use std::cell::Cell;
-use std::intrinsics::prefetch_read_data;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
 
@@ -13,7 +12,8 @@ struct NodeInfo {
     excess: f64,
 }
 
-pub struct AlgoPolyPa {
+pub struct AlgoPolyPa<R : Rng> {
+    rng : R,
     num_total_nodes: Node,
     num_seed_nodes: Node,
 
@@ -33,8 +33,9 @@ pub struct AlgoPolyPa {
     num_samples_to_reject: Cell<usize>,
 }
 
-impl Algorithm for AlgoPolyPa {
+impl<R : Rng> Algorithm<R> for AlgoPolyPa<R> {
     fn new(
+        rng : R,
         num_seed_nodes: Node,
         num_rand_nodes: Node,
         initial_degree: Node,
@@ -43,6 +44,7 @@ impl Algorithm for AlgoPolyPa {
     ) -> Self {
         let num_total_nodes = num_seed_nodes + num_rand_nodes;
         Self {
+            rng,
             num_seed_nodes,
             num_total_nodes,
             initial_degree,
@@ -81,14 +83,19 @@ impl Algorithm for AlgoPolyPa {
         }
     }
 
-    fn run(&mut self, rng: &mut impl Rng, writer: &mut impl EdgeWriter) {
+    fn run(&mut self, writer: &mut impl EdgeWriter) {
         let mut hosts = vec![0; self.initial_degree];
 
         for new_node in self.num_seed_nodes..self.num_total_nodes {
-            for i in 0..hosts.len() {
-                hosts[i] = self.sample_host(rng, |u| {
-                    self.without_replacement && i > 0 && hosts[0..i].contains(&u)
-                });
+            if self.without_replacement {
+                for i in 0..hosts.len() {
+                    hosts[i] =
+                        self.sample_host(|u| hosts[0..i].contains(&u));
+                }
+            } else {
+                for h in &mut hosts {
+                    *h = self.sample_host(|_| false);
+                }
             }
 
             self.num_current_nodes = new_node;
@@ -137,16 +144,13 @@ impl Algorithm for AlgoPolyPa {
     }
 }
 
-impl AlgoPolyPa {
-    fn sample_host(&self, rng: &mut impl Rng, reject_early: impl Fn(Node) -> bool) -> Node {
+impl<R : Rng> AlgoPolyPa<R> {
+    fn sample_host(&mut self, reject_early: impl Fn(Node) -> bool) -> Node {
         debug_assert!(!self.proposal_list.is_empty());
         loop {
             self.num_samples.update(|x| x + 1);
-            let proposal = *self.proposal_list.as_slice().choose(rng).unwrap() as usize;
+            let proposal = *self.proposal_list.as_slice().choose(&mut self.rng).unwrap() as usize;
 
-            unsafe {
-                prefetch_read_data(self.nodes.as_ptr().add(proposal), 2);
-            }
             if reject_early(proposal) {
                 continue;
             }
@@ -155,7 +159,7 @@ impl AlgoPolyPa {
 
             let info = self.nodes[proposal];
 
-            let accept = rng.gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
+            let accept = self.rng.gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
             //let accept = rng.gen_bool(info.excess / self.wmax);
 
             if accept {
