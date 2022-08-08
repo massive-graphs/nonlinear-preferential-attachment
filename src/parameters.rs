@@ -39,6 +39,7 @@ pub struct Parameters {
 pub enum SamplingAlgorithm {
     DynWeightIndex,
     PolyPA,
+    PolyPAPrefetch,
 }
 
 impl FromStr for SamplingAlgorithm {
@@ -48,6 +49,7 @@ impl FromStr for SamplingAlgorithm {
         match s.to_lowercase().as_str() {
             "dyn" => Ok(SamplingAlgorithm::DynWeightIndex),
             "polypa" => Ok(SamplingAlgorithm::PolyPA),
+            "polypa-prefetch" => Ok(SamplingAlgorithm::PolyPAPrefetch),
             _ => Err(format!("Unknown algorithm type: {}", s)),
         }
     }
