@@ -33,28 +33,6 @@ pub trait Algorithm<R: Rng>: Sized {
             weight_function,
         )
     }
-}
 
-/// Under the assumption that we produce k distinct hosts, this function can be used to sample
-/// which of the previous hosts, become also a host in the next round. This works well for
-/// distributions with a few very high degree nodes (alpha >> 1).
-/// For each input item, we output a single output item where `(u, True)` corresponds to a node
-/// that is kept while `(u, False)` is discarded
-fn reselect_previous<'a>(
-    rng: &'a mut impl Rng,
-    previous_nodes: impl Iterator<Item = (Node, f64)> + 'a,
-    num_hosts: usize,
-    mut total_weight: f64,
-) -> impl Iterator<Item = (Node, bool)> + 'a {
-    let mut num_hosts = num_hosts as i32;
-
-    previous_nodes.map(move |(node, weight)| {
-        let prob_reject = (1.0 - weight / total_weight).powf(num_hosts as f64);
-        let do_accept = !rng.gen_bool(prob_reject);
-
-        //total_weight -= weight;
-        num_hosts -= do_accept as i32;
-
-        (node, do_accept)
-    })
+    fn degrees(&self) -> Vec<Node>;
 }

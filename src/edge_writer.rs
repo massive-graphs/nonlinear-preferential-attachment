@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::*;
 use itertools::Itertools;
 use std::io::Write;
@@ -46,28 +48,33 @@ impl DegreeCount {
     }
 
     pub fn degree_distribution(&self) -> Vec<(usize, usize)> {
-        let mut counts = self
-            .degrees
-            .iter()
-            .copied()
-            .counts()
-            .into_iter()
-            .collect_vec();
-        counts.sort_unstable();
-        counts
+        degree_distribution(self.degrees.iter().copied())
     }
 
     pub fn report_distribution(&self, writer: &mut impl Write) -> std::io::Result<()> {
         let degree_distr = self.degree_distribution();
-        writer.write_all(
-            degree_distr
-                .iter()
-                .map(|&(d, n)| format!("#DD {:>10}, {:>10}\n", d, n))
-                .join("")
-                .as_bytes(),
-        )?;
-        Ok(())
+        report_distribution(&degree_distr, writer)
     }
+}
+
+pub fn degree_distribution(degrees: impl Iterator<Item = Node>) -> Vec<(usize, usize)> {
+    let mut counts = degrees.counts().into_iter().collect_vec();
+    counts.sort_unstable();
+    counts
+}
+
+pub fn report_distribution(
+    degree_distr: &[(usize, usize)],
+    writer: &mut impl Write,
+) -> std::io::Result<()> {
+    writer.write_all(
+        degree_distr
+            .iter()
+            .map(|&(d, n)| format!("#DD {:>10}, {:>10}\n", d, n))
+            .join("")
+            .as_bytes(),
+    )?;
+    Ok(())
 }
 
 impl EdgeWriter for DegreeCount {

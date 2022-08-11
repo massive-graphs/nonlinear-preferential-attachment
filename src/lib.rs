@@ -1,5 +1,7 @@
 #![feature(cell_update)]
 #![feature(core_intrinsics)]
+#![feature(slice_take)]
+#![feature(iter_is_partitioned)]
 
 pub mod algorithm;
 pub mod edge_writer;

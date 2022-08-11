@@ -36,7 +36,6 @@ pub struct AlgoPolyPaPrefetch<R: Rng> {
 
     initial_degree: Node,
     without_replacement: bool,
-    resample: bool,
     weight_function: WeightFunction,
 
     nodes: Vec<NodeInfo>,
@@ -58,13 +57,14 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPaPrefetch<R> {
         resample: bool,
         weight_function: WeightFunction,
     ) -> Self {
+        assert!(!resample);
+
         let num_total_nodes = num_seed_nodes + num_rand_nodes;
         Self {
             num_seed_nodes,
             num_total_nodes,
             initial_degree,
             without_replacement,
-            resample,
             weight_function,
 
             total_weight: 0.0,
@@ -159,6 +159,10 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPaPrefetch<R> {
                     }
                 })
         );
+    }
+
+    fn degrees(&self) -> Vec<Node> {
+        self.nodes.iter().map(|i| i.degree).collect()
     }
 }
 

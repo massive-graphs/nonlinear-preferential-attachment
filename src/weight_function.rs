@@ -1,4 +1,5 @@
 use super::Node;
+use std::cmp::Ordering;
 
 const NUM_PRECOMPUTED: usize = 100;
 
@@ -6,6 +7,13 @@ pub struct WeightFunction {
     exponent: f64,
     offset: f64,
     precomputed: [f64; NUM_PRECOMPUTED],
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Regime {
+    Sublinear,
+    Linear,
+    Superlinear,
 }
 
 /// Implements the function `f(d) = d**exponent + offset` with pre-computation of the first few values.
@@ -40,6 +48,22 @@ impl WeightFunction {
             unsafe { *self.precomputed.get_unchecked(degree as usize) }
         } else {
             Self::compute(self.exponent, self.offset, degree)
+        }
+    }
+
+    pub fn offset(&self) -> f64 {
+        self.offset
+    }
+
+    pub fn exponent(&self) -> f64 {
+        self.exponent
+    }
+
+    pub fn regime(&self) -> Regime {
+        match self.exponent.partial_cmp(&1.0).unwrap() {
+            Ordering::Less => Regime::Sublinear,
+            Ordering::Equal => Regime::Linear,
+            Ordering::Greater => Regime::Superlinear,
         }
     }
 

@@ -204,6 +204,10 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
                 })
         );
     }
+
+    fn degrees(&self) -> Vec<Node> {
+        self.nodes.iter().map(|i| i.degree).collect()
+    }
 }
 
 impl<R: Rng> AlgoPolyPa<R> {

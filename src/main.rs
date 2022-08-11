@@ -8,7 +8,7 @@ use rust_nlpa::algorithm::algo_dynamic_weighted_index::AlgoDynamicWeightedIndex;
 use rust_nlpa::algorithm::algo_poly_pa::AlgoPolyPa;
 use rust_nlpa::algorithm::algo_poly_pa_prefetch::AlgoPolyPaPrefetch;
 use rust_nlpa::algorithm::Algorithm;
-use rust_nlpa::edge_writer::{DegreeCount, EdgeCounter};
+use rust_nlpa::edge_writer::{degree_distribution, report_distribution, EdgeCounter};
 
 fn execute<R: rand::Rng, T: Algorithm<R>>(rng: R, opt: &Parameters) {
     let mut algorithm = T::from_parameters(rng, opt);
@@ -16,25 +16,26 @@ fn execute<R: rand::Rng, T: Algorithm<R>>(rng: R, opt: &Parameters) {
     // 1-regular graph
     algorithm.set_seed_graph_degrees((0..opt.seed_nodes.unwrap()).into_iter().map(|_| 1));
 
-    let runtime = if opt.report_degree_distribution {
-        let mut writer = DegreeCount::new(opt.seed_nodes.unwrap() + opt.nodes);
-
-        let start = Instant::now();
-        algorithm.run(&mut writer);
-        assert_eq!(writer.number_of_edges(), opt.nodes * opt.initial_degree);
-        let duration = start.elapsed();
-
-        writer.report_distribution(&mut stdout().lock()).unwrap();
-
-        duration
-    } else {
+    let runtime = {
         let mut writer = EdgeCounter::default();
         let start = Instant::now();
 
         algorithm.run(&mut writer);
-        assert_eq!(writer.number_of_edges(), opt.nodes * opt.initial_degree);
+        let runtime = start.elapsed();
 
-        start.elapsed()
+        let degrees = algorithm.degrees();
+
+        if opt.report_degree_distribution {
+            let distr = degree_distribution(degrees.iter().copied());
+            report_distribution(&distr, &mut stdout().lock()).unwrap();
+        }
+
+        assert_eq!(
+            degrees.iter().copied().sum::<usize>(),
+            opt.seed_nodes.unwrap() + 2 * opt.nodes * opt.initial_degree
+        );
+
+        runtime
     };
 
     println!("runtime_s:{}", runtime.as_secs_f64());
