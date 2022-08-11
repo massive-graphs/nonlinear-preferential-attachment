@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 mod proposal_list;
 mod shared_state;
 mod worker;
@@ -9,6 +11,7 @@ use worker::Worker;
 
 use atomic_float::AtomicF64;
 use crossbeam::atomic::AtomicCell;
+use itertools::Itertools;
 use rand::SeedableRng;
 use rand_distr::Distribution;
 use std::sync::atomic::Ordering;
@@ -16,16 +19,19 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
-const NUM_THREADS: usize = 2;
 
 pub struct AlgoParallelPolyPa<R: Rng + Send + Sync> {
     rng: R,
+    num_threads: usize,
     state: Arc<State>,
 }
 
 impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallelPolyPa<R> {
+    const IS_PARALLEL: bool = true;
+
     fn new(
         rng: R,
+        num_threads: usize,
         num_seed_nodes: Node,
         num_rand_nodes: Node,
         initial_degree: Node,
@@ -38,6 +44,7 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
 
         Self {
             rng,
+            num_threads,
             state: Arc::new(State {
                 num_seed_nodes,
                 num_total_nodes,
@@ -52,7 +59,7 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
                     .collect(),
                 proposal_list: Arc::new(ProposalList::new(
                     7 * num_total_nodes / 3 + 10000,
-                    NUM_THREADS,
+                    num_threads,
                 )),
 
                 wmax: AtomicF64::new(0.0),
@@ -79,21 +86,21 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
     }
 
     fn run(&mut self, _writer: &mut impl EdgeWriter) {
-        let num_threads = NUM_THREADS;
+        let num_threads = self.num_threads; // needed for capture down below
+        let barrier = Arc::new(Barrier::new(num_threads));
 
-        let mut handles = Vec::with_capacity(num_threads);
-        let barrier = Arc::new(Barrier::new(NUM_THREADS));
+        let handles = (0..self.num_threads)
+            .into_iter()
+            .map(|rank| {
+                let barrier = barrier.clone();
+                let rng = R::seed_from_u64(self.rng.gen()); // TODO: improve seeding
+                let state = self.state.clone();
 
-        for rank in 0..num_threads {
-            let local_barrier = barrier.clone();
-
-            let local_rng = R::seed_from_u64(self.rng.gen()); // TODO: improve seeding
-            let local_state = self.state.clone();
-
-            handles.push(thread::spawn(move || {
-                Worker::new(local_rng, local_state, local_barrier, rank, num_threads).run();
-            }));
-        }
+                thread::spawn(move || {
+                    Worker::new(rng, state, barrier, rank, num_threads).run();
+                })
+            })
+            .collect_vec();
 
         for handle in handles {
             handle.join().unwrap();

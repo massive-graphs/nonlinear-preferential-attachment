@@ -16,8 +16,11 @@ pub struct AlgoDynamicWeightedIndex<R: Rng> {
 }
 
 impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
+    const IS_PARALLEL: bool = false;
+
     fn new(
         rng: R,
+        num_threads: usize,
         num_seed_nodes: Node,
         num_rand_nodes: Node,
         initial_degree: Node,
@@ -25,6 +28,7 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
         resample: bool,
         weight_function: WeightFunction,
     ) -> Self {
+        assert_eq!(num_threads, 1);
         assert!(!resample);
 
         Self {

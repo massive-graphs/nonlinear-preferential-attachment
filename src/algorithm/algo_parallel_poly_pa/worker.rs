@@ -5,6 +5,7 @@ use itertools::Itertools;
 use rand_distr::Geometric;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub struct Worker<R: Rng + Send + Sync> {
     rank: usize,
@@ -30,6 +31,11 @@ pub struct Worker<R: Rng + Send + Sync> {
     weight_max_degree: f64,
 
     executes_phase3: bool,
+
+    instant_last_report: Instant,
+    instant_start: Instant,
+
+    epoch_id: usize,
 }
 
 impl<R: Rng + Send + Sync> Worker<R> {
@@ -45,6 +51,9 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
         let epoch_starts_with_node = 0;
         let epoch_ends_with_node = algo.num_seed_nodes;
+
+        let now = Instant::now();
+
         Self {
             rank,
             num_threads,
@@ -69,15 +78,15 @@ impl<R: Rng + Send + Sync> Worker<R> {
             weight_max_degree: f64::NAN,
 
             executes_phase3: false,
+
+            epoch_id: 0,
+            instant_start: now,
+            instant_last_report: now,
         }
     }
 
     pub fn run(&mut self) {
-        let mut num_epochs = 0;
-
         loop {
-            num_epochs += 1;
-
             let phase1_ended_with;
             {
                 self.setup_local_state_for_new_epoch();
@@ -91,7 +100,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
                 self.epoch_ends_with_node = self.algo.epoch_ends_with_node.load();
                 self.executes_phase3 = phase1_ended_with == self.epoch_ends_with_node;
 
-                self.report_progress();
+                self.report_progress_sometimes();
 
                 self.phase2_update_proposal_list();
 
@@ -116,14 +125,13 @@ impl<R: Rng + Send + Sync> Worker<R> {
             self.barrier.wait();
         }
 
-        if self.rank == 1 {
-            println!("Num epochs: {}", num_epochs);
-        }
+        self.report_progress_forced();
     }
 
     fn setup_local_state_for_new_epoch(&mut self) {
         self.epoch_starts_with_node = self.epoch_ends_with_node;
         self.epoch_ends_with_node = self.algo.num_total_nodes;
+        self.epoch_id += 1;
 
         self.epoch_begin_total_weight = self.algo.total_weight.load(Ordering::Acquire);
         self.total_weight = self.epoch_begin_total_weight;
@@ -334,15 +342,42 @@ impl<R: Rng + Send + Sync> Worker<R> {
         }
     }
 
-    fn report_progress(&mut self) {
-        if false && self.is_leader_thread() {
-            println!(
-                "Epoch {:>10} to {:>10}; len: {:>10}",
-                self.epoch_starts_with_node,
-                self.epoch_ends_with_node,
-                self.epoch_ends_with_node - self.epoch_starts_with_node
-            );
+    fn report_progress_sometimes(&mut self) {
+        if !self.is_leader_thread() {
+            return;
         }
+
+        let now = Instant::now();
+        let duration = now.duration_since(self.instant_last_report);
+
+        if duration.as_secs_f64() < 0.2 {
+            return;
+        }
+
+        self.report_progress_now(now);
+    }
+
+    fn report_progress_forced(&mut self) {
+        if !self.is_leader_thread() {
+            return;
+        }
+
+        let now = Instant::now();
+        self.report_progress_now(now);
+    }
+
+    fn report_progress_now(&mut self, now: Instant) {
+        let elasped_ms = now.duration_since(self.instant_start).as_millis();
+        self.instant_last_report = now;
+
+        println!(
+            "{:>7}ms Epoch {:>6} from {:>9} to {:>9}; len: {:>5}",
+            elasped_ms,
+            self.epoch_id,
+            self.epoch_starts_with_node,
+            self.epoch_ends_with_node,
+            self.epoch_ends_with_node - self.epoch_starts_with_node
+        );
     }
 
     #[inline]

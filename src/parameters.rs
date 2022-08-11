@@ -36,6 +36,9 @@ pub struct Parameters {
 
     #[structopt(short = "r", long)]
     pub report_degree_distribution: bool,
+
+    #[structopt(short = "t", long)]
+    pub num_threads: Option<usize>,
 }
 
 #[derive(Eq, Clone, Copy, PartialEq, Debug)]
@@ -72,6 +75,8 @@ pub fn get_and_check_options() -> Parameters {
 
     assert!(opt.exponent >= 0.0);
     assert!(opt.offset >= 0.0);
+
+    assert!(opt.num_threads.unwrap_or(1) > 0);
 
     opt
 }

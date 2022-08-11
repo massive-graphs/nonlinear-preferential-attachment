@@ -9,8 +9,11 @@ pub mod algo_poly_pa;
 pub mod algo_poly_pa_prefetch;
 
 pub trait Algorithm<R: Rng>: Sized {
+    const IS_PARALLEL: bool;
+
     fn new(
         rng: R,
+        num_threads: usize,
         num_seed_nodes: Node,
         num_rand_nodes: Node,
         initial_degree: Node,
@@ -18,6 +21,7 @@ pub trait Algorithm<R: Rng>: Sized {
         resample: bool,
         weight_function: WeightFunction,
     ) -> Self;
+
     fn set_seed_graph_degrees(&mut self, degrees: impl Iterator<Item = Node>);
     fn run(&mut self, writer: &mut impl EdgeWriter);
 
@@ -26,6 +30,13 @@ pub trait Algorithm<R: Rng>: Sized {
         assert!(weight_function.get(1) > 0.0);
         Self::new(
             rng,
+            opt.num_threads.unwrap_or_else(|| {
+                if Self::IS_PARALLEL {
+                    num_cpus::get()
+                } else {
+                    1
+                }
+            }),
             opt.seed_nodes.unwrap(),
             opt.nodes,
             opt.initial_degree,
