@@ -4,6 +4,7 @@ use crate::weight_function::WeightFunction;
 use rand::Rng;
 
 pub mod algo_dynamic_weighted_index;
+pub mod algo_parallel_poly_pa;
 pub mod algo_poly_pa;
 pub mod algo_poly_pa_prefetch;
 

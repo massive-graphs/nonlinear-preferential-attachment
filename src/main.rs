@@ -5,6 +5,7 @@ use std::time::Instant;
 use pcg_rand::Pcg64;
 use rand::SeedableRng;
 use rust_nlpa::algorithm::algo_dynamic_weighted_index::AlgoDynamicWeightedIndex;
+use rust_nlpa::algorithm::algo_parallel_poly_pa::AlgoParallelPolyPa;
 use rust_nlpa::algorithm::algo_poly_pa::AlgoPolyPa;
 use rust_nlpa::algorithm::algo_poly_pa_prefetch::AlgoPolyPaPrefetch;
 use rust_nlpa::algorithm::Algorithm;
@@ -54,5 +55,6 @@ fn main() {
         SamplingAlgorithm::DynWeightIndex => execute::<_, AlgoDynamicWeightedIndex<_>>(rng, &opt),
         SamplingAlgorithm::PolyPA => execute::<_, AlgoPolyPa<_>>(rng, &opt),
         SamplingAlgorithm::PolyPAPrefetch => execute::<_, AlgoPolyPaPrefetch<_>>(rng, &opt),
+        SamplingAlgorithm::ParallelPolyPa => execute::<_, AlgoParallelPolyPa<_>>(rng, &opt),
     };
 }

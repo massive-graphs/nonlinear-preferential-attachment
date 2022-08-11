@@ -43,6 +43,7 @@ pub enum SamplingAlgorithm {
     DynWeightIndex,
     PolyPA,
     PolyPAPrefetch,
+    ParallelPolyPa,
 }
 
 impl FromStr for SamplingAlgorithm {
@@ -53,6 +54,7 @@ impl FromStr for SamplingAlgorithm {
             "dyn" => Ok(SamplingAlgorithm::DynWeightIndex),
             "polypa" => Ok(SamplingAlgorithm::PolyPA),
             "polypa-prefetch" => Ok(SamplingAlgorithm::PolyPAPrefetch),
+            "par-polypa" => Ok(SamplingAlgorithm::ParallelPolyPa),
             _ => Err(format!("Unknown algorithm type: {}", s)),
         }
     }
