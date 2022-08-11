@@ -12,7 +12,7 @@ use crossbeam::atomic::AtomicCell;
 use rand::SeedableRng;
 use rand_distr::Distribution;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
@@ -50,12 +50,14 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
                     .into_iter()
                     .map(|_| NodeInfo::default())
                     .collect(),
-                proposal_list: Arc::new(ProposalList::new(7 * num_total_nodes / 3, NUM_THREADS)),
+                proposal_list: Arc::new(ProposalList::new(
+                    7 * num_total_nodes / 3 + 10000,
+                    NUM_THREADS,
+                )),
 
                 wmax: AtomicF64::new(0.0),
                 max_degree: AtomicCell::new(0),
 
-                epoch_starts_with_node: AtomicCell::new(num_seed_nodes),
                 epoch_ends_with_node: AtomicCell::new(num_total_nodes),
             }),
         }
@@ -63,15 +65,11 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
 
     fn set_seed_graph_degrees(&mut self, degrees: impl Iterator<Item = Node>) {
         let mut num_input_degrees = 0;
-        let mut max_degree = 0;
 
         for (node, degree) in degrees.enumerate() {
             self.state.sequential_set_degree(node, degree);
-            max_degree = max_degree.max(degree);
             num_input_degrees += 1;
         }
-
-        self.state.max_degree.fetch_max(max_degree);
 
         assert_eq!(num_input_degrees, self.state.num_seed_nodes);
 
@@ -85,25 +83,15 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
 
         let mut handles = Vec::with_capacity(num_threads);
         let barrier = Arc::new(Barrier::new(NUM_THREADS));
-        let mutex = Arc::new(Mutex::new(()));
 
         for rank in 0..num_threads {
             let local_barrier = barrier.clone();
 
             let local_rng = R::seed_from_u64(self.rng.gen()); // TODO: improve seeding
             let local_state = self.state.clone();
-            let local_mutex = mutex.clone();
 
             handles.push(thread::spawn(move || {
-                Worker::new(
-                    local_rng,
-                    local_state,
-                    local_barrier,
-                    local_mutex,
-                    rank,
-                    num_threads,
-                )
-                .run();
+                Worker::new(local_rng, local_state, local_barrier, rank, num_threads).run();
             }));
         }
 

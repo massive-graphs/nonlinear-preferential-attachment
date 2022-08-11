@@ -60,68 +60,41 @@ impl ProposalList {
         }
     }
 
-    pub fn compact_unfinished_ranges(&self) {
+    pub fn compact_unfinished_ranges(&self) -> usize {
         // we cannot borrow self as mut (as shared between threads) and work on a (non-atomic) copy
-        let mut uninit_blocks = self
+        let mut gap_list = self
             .unfinished_blocks
             .iter()
             .map(|b| b.get_range())
             .filter(|r| !r.is_empty())
             .collect_vec();
 
-        if uninit_blocks.is_empty() {
-            return;
+        if gap_list.is_empty() {
+            return self.begin_of_next_block.load();
         }
 
-        uninit_blocks.sort_unstable_by_key(|r| -(r.start as isize));
+        gap_list.sort_unstable_by_key(|r| -(r.start as isize));
 
-        let active_range = uninit_blocks.last().unwrap().start.saturating_sub(1)
-            ..uninit_blocks.first().unwrap().end;
+        let active_range =
+            gap_list.last().unwrap().start.saturating_sub(1)..gap_list.first().unwrap().end;
 
-        debug_assert!(uninit_blocks.iter().all(|r| self.proposal_list[r.clone()]
-            .iter()
-            .all(|p| p.load() == UNINITIALIZED)));
-
-        let mut init_blocks = uninit_blocks
+        let mut set_list = gap_list
             .iter()
             .rev()
             .tuple_windows()
-            .map(|(suc, pred)| pred.end..suc.start)
+            .map(|(pred, suc)| pred.end..suc.start)
             .collect_vec();
+
+        if gap_list.first().unwrap().end != self.begin_of_next_block.load() {
+            // the proposal lists ends with valid data
+            set_list.push(gap_list.first().unwrap().end..self.begin_of_next_block.load());
+        }
 
         // uninit_blocks is sorted decreasingly, i.e. the "left-most" block in proposal list is at the back
         // init_blocks is sorted increasingly. We chose this order since we will pop from the back
-        let mut init = init_blocks.pop().unwrap();
-        let end = 'compacting: loop {
-            if uninit_blocks.len() == 1 {
-                break uninit_blocks.first().unwrap().start;
-            }
+        let end = self.compact_from_lists(&mut gap_list, &mut set_list);
 
-            // the last block may remains free
-            let mut uninit = uninit_blocks.pop().unwrap();
-
-            while !uninit.is_empty() {
-                uninit.end -= 1;
-                init.end -= 1;
-
-                self.proposal_list[uninit.end].store(self.proposal_list[init.end].load());
-                self.proposal_list[init.end].store(UNINITIALIZED);
-
-                if init.is_empty() {
-                    match init_blocks.pop() {
-                        Some(b) => init = b,
-                        None => {
-                            if uninit.is_empty() {
-                                continue; // first if of loop will take care
-                            } else {
-                                break 'compacting uninit.start;
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
+        // ensure compaction worked: all elements up to end are initilized; all remaining are uninitialized
         debug_assert!(self.proposal_list[active_range.start..end]
             .iter()
             .all(|p| p.load() != UNINITIALIZED));
@@ -131,6 +104,62 @@ impl ProposalList {
             .all(|p| p.load() == UNINITIALIZED));
 
         self.begin_of_next_block.store(end);
+
+        end
+    }
+
+    fn compact_from_lists(
+        &self,
+        gap_list: &mut Vec<Range<usize>>,
+        set_list: &mut Vec<Range<usize>>,
+    ) -> usize {
+        // ensure all "gaps" are uninitialized and "sets" are initilized
+        debug_assert!(gap_list.iter().all(|r| self.proposal_list[r.clone()]
+            .iter()
+            .all(|p| p.load() == UNINITIALIZED)));
+
+        debug_assert!(set_list.iter().all(|r| self.proposal_list[r.clone()]
+            .iter()
+            .all(|p| p.load() != UNINITIALIZED)));
+
+        if set_list.is_empty() {
+            return gap_list.first().unwrap().start;
+        }
+
+        let mut set_range = set_list.pop().unwrap();
+        'compacting: loop {
+            if gap_list.len() == 1 {
+                break gap_list.first().unwrap().start.min(set_range.end);
+            }
+
+            let mut gap_range = gap_list.pop().unwrap();
+
+            if set_range.end < gap_range.start {
+                break 'compacting set_range.end;
+            }
+
+            loop {
+                if set_range.is_empty() {
+                    match set_list.pop() {
+                        Some(b) if b.start >= gap_range.end => set_range = b,
+                        _ => break 'compacting gap_range.start,
+                    }
+                }
+
+                set_range.end -= 1;
+
+                let value = self.proposal_list[set_range.end].load();
+                debug_assert!(value != UNINITIALIZED);
+                self.proposal_list[gap_range.start].store(value);
+                self.proposal_list[set_range.end].store(UNINITIALIZED);
+
+                gap_range.start += 1;
+
+                if gap_range.is_empty() {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -155,7 +184,7 @@ impl Sampler {
 
         loop {
             let index = rng.gen_range(begin..self.end);
-            let proposal = self.proposal_list.proposal_list[index].load(); // we can make this unchecked
+            let proposal = unsafe { self.proposal_list.proposal_list.get_unchecked(index) }.load();
             if likely(proposal != UNINITIALIZED) {
                 break proposal;
             }
@@ -195,6 +224,8 @@ impl Producer {
     }
 
     pub(super) fn push(&mut self, node: Node, mut count: usize) {
+        debug_assert!(node != UNINITIALIZED);
+
         while count > 0 {
             if self.begin == self.end {
                 self.fetch_new_range();
@@ -205,6 +236,7 @@ impl Producer {
                 // this access is safe, since we checked the validity in fetch_new_range and
                 // the Arc prevents modification of the vector size
                 unsafe { self.proposal_list.proposal_list.get_unchecked(self.begin) }.store(node);
+                self.begin += 1;
             }
 
             count -= this_count;
@@ -223,5 +255,102 @@ impl Producer {
         self.begin = self.proposal_list.begin_of_next_block.fetch_add(BLOCK_SIZE);
         assert!(self.begin + BLOCK_SIZE < self.proposal_list.proposal_list.len());
         self.end = self.begin + BLOCK_SIZE;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pcg_rand::Pcg64;
+    use rand::prelude::IteratorRandom;
+
+    fn run_n_threads<F>(size: usize, num_threads: usize, callback: Arc<F>)
+    where
+        F: Fn(usize, (usize, usize), Arc<ProposalList>, Arc<Barrier>) + Send + Sync + 'static,
+    {
+        let proposal_list = Arc::new(ProposalList::new(size, num_threads));
+        let barrier = Arc::new(Barrier::new(num_threads));
+
+        let mut handles = Vec::with_capacity(num_threads);
+
+        for rank in 0..num_threads {
+            let proposal_list = proposal_list.clone();
+            let barrier = barrier.clone();
+            let callback = callback.clone();
+            handles.push(thread::spawn(move || {
+                callback(size, (rank, num_threads), proposal_list, barrier)
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    fn run_randomized(size: usize, num_threads: usize) {
+        run_n_threads(
+            size,
+            num_threads,
+            Arc::new(
+                |size,
+                 (rank, num_threads),
+                 proposal_list: Arc<ProposalList>,
+                 barrier: Arc<Barrier>| {
+                    let mut rng =
+                        Pcg64::seed_from_u64((rank * 34532 + 12345 + size + num_threads) as u64);
+
+                    let elements_to_push = size / num_threads;
+                    let mut inds = (0..elements_to_push).choose_multiple(&mut rng, 10);
+                    inds.sort_unstable();
+
+                    inds.push(elements_to_push);
+
+                    let mut i = elements_to_push * rank;
+
+                    let mut producer = Producer::new(proposal_list.clone());
+
+                    for num_to_push in inds.iter().tuple_windows().map(|(a, b)| b - a) {
+                        for _ in 0..num_to_push {
+                            producer.push(i, 1);
+                            i += 1;
+                        }
+                        producer.free_unfinished_range();
+
+                        barrier.wait();
+
+                        if rank == 0 {
+                            proposal_list.compact_unfinished_ranges();
+                        }
+
+                        barrier.wait();
+                    }
+                },
+            ),
+        );
+    }
+
+    const SIZES: [usize; 12] = [10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 10000];
+
+    #[test]
+    fn randomized_seq() {
+        for size in SIZES {
+            run_randomized(size, 1);
+        }
+    }
+
+    #[test]
+    fn randomized_two_threads() {
+        for size in SIZES {
+            run_randomized(size, 2);
+        }
+    }
+
+    #[test]
+    fn randomized_many_threads() {
+        for threads in 3..16 {
+            for size in SIZES {
+                run_randomized(size, threads);
+            }
+        }
     }
 }

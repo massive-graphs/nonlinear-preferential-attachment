@@ -36,4 +36,8 @@ pub trait Algorithm<R: Rng>: Sized {
     }
 
     fn degrees(&self) -> Vec<Node>;
+
+    fn number_of_edges(&self) -> usize {
+        self.degrees().iter().sum::<usize>() / 2
+    }
 }

@@ -34,7 +34,6 @@ pub(super) struct State {
     pub(super) wmax: AtomicF64,
     pub(super) max_degree: AtomicCell<usize>,
 
-    pub(super) epoch_starts_with_node: AtomicCell<Node>,
     pub(super) epoch_ends_with_node: AtomicCell<Node>,
 }
 
@@ -42,6 +41,8 @@ impl State {
     pub(super) fn sequential_set_degree(&self, node: Node, degree: Node) {
         let info = &self.nodes[node];
         let old_degree = info.degree.swap(degree);
+
+        self.max_degree.fetch_max(degree);
 
         let old_weight = self.weight_function.get(old_degree);
         let new_weight = self.weight_function.get(degree);
