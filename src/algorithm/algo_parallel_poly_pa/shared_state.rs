@@ -1,4 +1,5 @@
 use super::*;
+use crate::algorithm::algo_parallel_poly_pa::run_length::RunlengthSampler;
 use crossbeam::atomic::AtomicCell;
 
 pub(super) struct NodeInfo {
@@ -28,13 +29,13 @@ pub(super) struct State {
     pub(super) weight_function: WeightFunction,
 
     pub(super) nodes: Vec<NodeInfo>,
+
     pub(super) proposal_list: Arc<ProposalList>,
     pub(super) total_weight: AtomicF64,
+    pub(super) runlength_sampler: RunlengthSampler,
 
     pub(super) wmax: AtomicF64,
     pub(super) max_degree: AtomicCell<usize>,
-
-    pub(super) epoch_ends_with_node: AtomicCell<Node>,
 }
 
 impl State {

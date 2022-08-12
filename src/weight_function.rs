@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 
 const NUM_PRECOMPUTED: usize = 100;
 
+#[derive(Clone)]
 pub struct WeightFunction {
     exponent: f64,
     offset: f64,

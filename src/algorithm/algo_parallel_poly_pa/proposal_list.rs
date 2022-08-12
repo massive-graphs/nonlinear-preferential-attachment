@@ -36,7 +36,7 @@ pub(super) struct ProposalList {
 
 impl ProposalList {
     pub fn new(size: usize, num_threads: usize) -> Self {
-        let n = size + num_threads * BLOCK_SIZE;
+        let n = size + 2 * num_threads * BLOCK_SIZE;
 
         let mut proposal_list = Vec::with_capacity(n);
         for _ in 0..n {
@@ -203,14 +203,14 @@ impl Sampler {
     }
 }
 
-pub(super) struct Producer {
+pub(super) struct Writer {
     proposal_list: Arc<ProposalList>,
     producer_id: usize,
     begin: usize,
     end: usize,
 }
 
-impl Producer {
+impl Writer {
     pub(super) fn new(proposal_list: Arc<ProposalList>) -> Self {
         let producer_id = proposal_list.producer_id.fetch_add(1);
         assert!(producer_id < proposal_list.unfinished_blocks.len());
@@ -307,7 +307,7 @@ mod test {
 
                     let mut i = elements_to_push * rank;
 
-                    let mut producer = Producer::new(proposal_list.clone());
+                    let mut producer = Writer::new(proposal_list.clone());
 
                     for num_to_push in inds.iter().tuple_windows().map(|(a, b)| b - a) {
                         for _ in 0..num_to_push {

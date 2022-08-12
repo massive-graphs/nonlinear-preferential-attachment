@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod proposal_list;
+mod run_length;
 mod shared_state;
 mod worker;
 
@@ -9,6 +10,7 @@ use proposal_list::ProposalList;
 use shared_state::{NodeInfo, State};
 use worker::Worker;
 
+use crate::algorithm::algo_parallel_poly_pa::run_length::RunlengthSampler;
 use atomic_float::AtomicF64;
 use crossbeam::atomic::AtomicCell;
 use itertools::Itertools;
@@ -42,6 +44,10 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
         assert!(!resample);
         let num_total_nodes = num_seed_nodes + num_rand_nodes;
 
+        println!("NodeInfo: {}b", std::mem::size_of::<NodeInfo>());
+
+        let runlength_sampler = RunlengthSampler::new(weight_function.clone(), initial_degree);
+
         Self {
             rng,
             num_threads,
@@ -61,11 +67,10 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
                     7 * num_total_nodes / 3 + 10000,
                     num_threads,
                 )),
+                runlength_sampler,
 
                 wmax: AtomicF64::new(0.0),
                 max_degree: AtomicCell::new(0),
-
-                epoch_ends_with_node: AtomicCell::new(num_total_nodes),
             }),
         }
     }
@@ -83,6 +88,13 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
         for u in 0..self.state.num_seed_nodes {
             self.state.sequential_update_node_counts_in_proposal_list(u);
         }
+
+        self.state.runlength_sampler.setup_epoch(
+            self.state.num_seed_nodes,
+            self.state.num_total_nodes,
+            self.state.max_degree.load(),
+            self.state.total_weight.load(Ordering::Acquire),
+        );
     }
 
     fn run(&mut self, _writer: &mut impl EdgeWriter) {
