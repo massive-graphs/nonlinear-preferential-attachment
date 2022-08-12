@@ -12,7 +12,7 @@ impl Default for NodeInfo {
     fn default() -> Self {
         Self {
             degree: AtomicCell::new(0),
-            count: AtomicCell::new(0),
+            count: AtomicCell::new(1),
             weight: AtomicF64::new(0.0),
         }
     }

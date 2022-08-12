@@ -174,17 +174,20 @@ impl Sampler {
         Self { proposal_list, end }
     }
 
-    #[inline]
-    pub fn sample(&self, rng: &mut impl Rng) -> Node {
-        self.sample_with_explicit_begin(rng, 0)
-    }
-
-    pub fn sample_with_explicit_begin(&self, rng: &mut impl Rng, begin: usize) -> Node {
-        debug_assert!(begin < self.end);
-
+    pub fn sample(&self, rng: &mut impl Rng, new_node: Node) -> Node {
         loop {
-            let index = rng.gen_range(begin..self.end);
-            let proposal = unsafe { self.proposal_list.proposal_list.get_unchecked(index) }.load();
+            let index = rng.gen_range(0..self.end + new_node);
+
+            if index < new_node {
+                break index;
+            }
+
+            let proposal = unsafe {
+                self.proposal_list
+                    .proposal_list
+                    .get_unchecked(index - new_node)
+            }
+            .load();
             if likely(proposal != UNINITIALIZED) {
                 break proposal;
             }

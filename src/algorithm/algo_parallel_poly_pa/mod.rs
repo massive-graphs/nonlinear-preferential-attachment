@@ -64,7 +64,7 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
                     .map(|_| NodeInfo::default())
                     .collect(),
                 proposal_list: Arc::new(ProposalList::new(
-                    7 * num_total_nodes / 3 + 10000,
+                    4 * num_total_nodes / 3 + 10000,
                     num_threads,
                 )),
                 runlength_sampler,

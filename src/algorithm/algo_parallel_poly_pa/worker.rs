@@ -141,13 +141,13 @@ impl<R: Rng + Send + Sync> Worker<R> {
         assert!(hosts.is_empty());
 
         for _ in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
-            self.sample_hosts(&mut hosts, self.algo.initial_degree);
+            self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
         }
 
         self.hosts_linked_in_epoch = hosts;
     }
 
-    fn sample_hosts(&mut self, hosts: &mut Vec<Node>, number: Node) -> u64 {
+    fn sample_hosts(&mut self, hosts: &mut Vec<Node>, new_node: Node, number: Node) -> u64 {
         let mut attempts = 0;
         let wmax_scaled = SCALE / self.algo.wmax.load(Ordering::Acquire);
 
@@ -156,7 +156,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
         for _ in 0..number {
             hosts.push(loop {
                 attempts += 1;
-                let proposal = self.proposal_sampler.sample(&mut self.rng);
+                let proposal = self.proposal_sampler.sample(&mut self.rng, new_node);
 
                 unsafe {
                     std::intrinsics::prefetch_read_data(self.algo.nodes.as_ptr().add(proposal), 1);
@@ -247,10 +247,9 @@ impl<R: Rng + Send + Sync> Worker<R> {
         let mut hosts = Vec::with_capacity(self.algo.initial_degree);
 
         // TODO: missing increased sampling odds for single host
-
-        self.sample_hosts(&mut hosts, self.algo.initial_degree);
-
         let last_node = self.epoch_nodes.end - 1;
+
+        self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
 
         self.algo
             .sequential_set_degree(last_node, self.algo.initial_degree);
