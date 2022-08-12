@@ -79,14 +79,11 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
             {
                 self.phase1_sample_independent_hosts();
-                self.proposal_sampler.update_end();
             }
 
             self.barrier.wait();
 
             {
-                self.report_progress_sometimes();
-
                 self.phase2_update_proposal_list();
 
                 self.algo.total_weight.fetch_add(
@@ -109,12 +106,17 @@ impl<R: Rng + Send + Sync> Worker<R> {
                 )
             }
 
+            if self.rank + 1 == self.num_threads {
+                self.report_progress_sometimes();
+            }
+
             if self.epoch_nodes.end >= self.algo.num_total_nodes {
                 break;
             }
 
             self.barrier.wait();
 
+            self.proposal_sampler.update_end();
             self.algo.runlength_sampler.sample(&mut self.rng);
 
             self.barrier.wait();
@@ -133,26 +135,34 @@ impl<R: Rng + Send + Sync> Worker<R> {
     }
 
     fn phase1_sample_independent_hosts(&mut self) {
-        let mut hosts = Vec::with_capacity(self.algo.initial_degree);
-
         let start_node = self.epoch_nodes.start + self.rank;
+        let mut hosts = std::mem::take(&mut self.hosts_linked_in_epoch);
 
-        for _ in (start_node..self.epoch_nodes.end).step_by(self.num_threads) {
-            self.sample_hosts(&mut hosts);
-            self.hosts_linked_in_epoch.append(&mut hosts);
+        assert!(hosts.is_empty());
+
+        for _ in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
+            self.sample_hosts(&mut hosts, self.algo.initial_degree);
         }
+
+        self.hosts_linked_in_epoch = hosts;
     }
 
-    fn sample_hosts(&mut self, hosts: &mut Vec<Node>) -> u64 {
+    fn sample_hosts(&mut self, hosts: &mut Vec<Node>, number: Node) -> u64 {
         let mut attempts = 0;
         let wmax_scaled = SCALE / self.algo.wmax.load(Ordering::Acquire);
 
-        while hosts.len() < self.algo.initial_degree {
+        let begin = hosts.len();
+
+        for _ in 0..number {
             hosts.push(loop {
                 attempts += 1;
                 let proposal = self.proposal_sampler.sample(&mut self.rng);
 
-                if hosts.contains(&proposal) {
+                unsafe {
+                    std::intrinsics::prefetch_read_data(self.algo.nodes.as_ptr().add(proposal), 1);
+                }
+
+                if hosts.as_slice().split_at(begin).1.contains(&proposal) {
                     continue;
                 }
 
@@ -166,7 +176,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
     }
 
     fn do_accept_host(&mut self, proposal: Node, wmax_scaled: f64) -> bool {
-        let info = &self.algo.nodes[proposal];
+        let info = unsafe { self.algo.nodes.get_unchecked(proposal) };
 
         let weight = info.weight.load(Ordering::Acquire);
         let excess = weight / info.count.load() as f64;
@@ -177,17 +187,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
     fn phase2_update_proposal_list(&mut self) {
         let initial_degree = self.algo.initial_degree;
 
-        let num_nodes_contributed = self.number_of_independent_nodes_contributed();
-        let hosts_connected_to = num_nodes_contributed * initial_degree;
-
-        debug_assert!(self.hosts_linked_in_epoch.len() >= hosts_connected_to);
-
-        let host_degree_increases = self
-            .hosts_linked_in_epoch
-            .iter()
-            .take(hosts_connected_to)
-            .copied()
-            .counts();
+        let host_degree_increases = self.hosts_linked_in_epoch.iter().copied().counts();
 
         let first_node = self.epoch_nodes.start + self.rank;
         let own_degree_increases = (first_node..self.epoch_nodes.end)
@@ -195,23 +195,14 @@ impl<R: Rng + Send + Sync> Worker<R> {
             .into_iter()
             .map(|u| (u, initial_degree));
 
-        let assumed_nodes = (self.epoch_nodes.start + num_nodes_contributed) as f64;
-
         own_degree_increases
             .chain(host_degree_increases.into_iter())
-            .for_each(|(node, deg_inc)| self.increase_degree_of_node(node, deg_inc, assumed_nodes));
+            .for_each(|(node, deg_inc)| {
+                self.increase_degree_of_node(node, deg_inc, self.epoch_nodes.end as f64)
+            });
 
         self.hosts_linked_in_epoch.clear();
         self.algo.max_degree.fetch_max(self.max_degree);
-    }
-
-    fn number_of_independent_nodes_contributed(&mut self) -> usize {
-        let nodes_in_epoch = self.epoch_nodes.len();
-
-        let first = (self.rank < nodes_in_epoch) as usize;
-        let following = nodes_in_epoch.saturating_sub(self.rank + 1) / self.num_threads;
-
-        (first + following).saturating_sub(self.is_leader_thread() as usize)
     }
 
     fn increase_degree_of_node(
@@ -257,7 +248,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
         // TODO: missing increased sampling odds for single host
 
-        self.sample_hosts(&mut hosts);
+        self.sample_hosts(&mut hosts, self.algo.initial_degree);
 
         let last_node = self.epoch_nodes.end - 1;
 
@@ -273,10 +264,6 @@ impl<R: Rng + Send + Sync> Worker<R> {
     }
 
     fn report_progress_sometimes(&mut self) {
-        if !self.is_leader_thread() {
-            return;
-        }
-
         let now = Instant::now();
         let duration = now.duration_since(self.instant_last_report);
 
@@ -288,10 +275,6 @@ impl<R: Rng + Send + Sync> Worker<R> {
     }
 
     fn report_progress_forced(&mut self) {
-        if !self.is_leader_thread() {
-            return;
-        }
-
         let now = Instant::now();
         self.report_progress_now(now);
     }
@@ -301,11 +284,12 @@ impl<R: Rng + Send + Sync> Worker<R> {
         self.instant_last_report = now;
 
         println!(
-            "{:>7}ms Epoch {:>6} from {:>9} to {:>9}; len: {:>5}",
+            "{:>7}ms Epoch {:>6} from {:>9} to {:>9} ({:>5.1} %); len: {:>5}",
             elasped_ms,
             self.epoch_id,
             self.epoch_nodes.start,
             self.epoch_nodes.end,
+            100.0 * self.epoch_nodes.end as f64 / self.algo.num_total_nodes as f64,
             self.epoch_nodes.len()
         );
     }
