@@ -222,6 +222,12 @@ impl<R: Rng + Send + Sync> Worker<R> {
         let new_weight = self.algo.weight_function.get(new_degree);
         let old_weight = info.weight.fetch_max(new_weight, Ordering::AcqRel);
 
+        if old_weight >= new_weight {
+            // this can happen if another thread race us to this point; but not an issue,
+            // since the other thread will take care of the "fallout"
+            return;
+        }
+
         self.total_weight += new_weight - old_weight;
 
         let count = (assumed_num_nodes * new_weight / self.total_weight).ceil() as usize;
