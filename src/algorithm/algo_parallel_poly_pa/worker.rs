@@ -6,6 +6,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
+use hurdles::Barrier;
+
 pub struct Worker<R: Rng + Send + Sync> {
     rank: usize,
     num_threads: usize,
@@ -15,7 +17,7 @@ pub struct Worker<R: Rng + Send + Sync> {
     proposal_writer: Writer,
     proposal_sampler: Sampler,
 
-    barrier: Arc<Barrier>,
+    barrier: Barrier,
 
     hosts_linked_in_epoch: Vec<Node>,
 
@@ -35,7 +37,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
     pub(super) fn new(
         rng: R,
         algo: Arc<State>,
-        barrier: Arc<Barrier>,
+        barrier: Barrier,
         rank: usize,
         num_threads: usize,
     ) -> Self {

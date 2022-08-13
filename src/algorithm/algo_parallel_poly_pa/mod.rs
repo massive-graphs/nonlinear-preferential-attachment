@@ -17,8 +17,10 @@ use itertools::Itertools;
 use rand::SeedableRng;
 use rand_distr::Distribution;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use std::thread;
+
+use hurdles::Barrier;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
 
@@ -99,7 +101,7 @@ impl<R: Rng + Send + Sync + SeedableRng + 'static> Algorithm<R> for AlgoParallel
 
     fn run(&mut self, _writer: &mut impl EdgeWriter) {
         let num_threads = self.num_threads; // needed for capture down below
-        let barrier = Arc::new(Barrier::new(num_threads));
+        let barrier = Barrier::new(num_threads);
 
         let handles = (0..self.num_threads)
             .into_iter()
