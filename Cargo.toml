@@ -17,6 +17,7 @@ crossbeam = "0.8"
 fxhash = "0.2.1"
 atomic_float = "0.1.0"
 num_cpus = "1.13"
+hurdles = "1.0.1"
 
 [profile.release]
 debug = true
