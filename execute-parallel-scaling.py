@@ -14,7 +14,7 @@ for (seed, (node, scaling), deg, expon, simple, resample,  algo, num_threads) in
     if deg == 1 and simple:
         continue
 
-    if scaling == "strong":
+    if scaling == "weak":
         node = node * num_threads
 
     filename = Path("logs") / algo / scaling / ("n%d_d%d_s%d_e%d_%d_l%d_t%d.log" % (node, deg, simple, math.floor(expon * 10), seed, resample, num_threads))
