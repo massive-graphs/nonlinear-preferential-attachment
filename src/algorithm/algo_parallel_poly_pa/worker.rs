@@ -1,6 +1,7 @@
 use super::{proposal_list::Writer, *};
 use crate::algorithm::algo_parallel_poly_pa::proposal_list::Sampler;
 use itertools::Itertools;
+use std::intrinsics::{likely, unlikely};
 use std::ops::Range;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -77,6 +78,8 @@ impl<R: Rng + Send + Sync> Worker<R> {
         self.algo.runlength_sampler.sample(&mut self.rng);
 
         loop {
+            self.barrier.wait();
+
             self.setup_local_state_for_new_epoch();
 
             {
@@ -98,33 +101,37 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
             self.barrier.wait();
 
-            if self.is_leader_thread() {
-                self.phase3_compaction_and_sampling();
-                self.algo.runlength_sampler.setup_epoch(
-                    self.epoch_nodes.end,
-                    self.algo.num_total_nodes,
-                    self.algo.max_degree.load(),
-                    self.algo.total_weight.load(Ordering::Acquire),
-                )
-            }
+            {
+                if self.is_leader_thread() {
+                    self.phase3_compaction_and_sampling();
+                    self.algo.runlength_sampler.setup_epoch(
+                        self.epoch_nodes.end,
+                        self.algo.num_total_nodes,
+                        self.algo.max_degree.load(),
+                        self.algo.total_weight.load(Ordering::Acquire),
+                    )
+                }
 
-            if self.rank + 1 == self.num_threads {
-                self.report_progress_sometimes();
-            }
+                if self.rank + 1 == self.num_threads {
+                    self.report_progress_sometimes();
+                }
 
-            if self.epoch_nodes.end >= self.algo.num_total_nodes {
-                break;
+                if self.epoch_nodes.end >= self.algo.num_total_nodes {
+                    break;
+                }
             }
 
             self.barrier.wait();
 
-            self.proposal_sampler.update_end();
-            self.algo.runlength_sampler.sample(&mut self.rng);
-
-            self.barrier.wait();
+            {
+                self.proposal_sampler.update_end();
+                self.algo.runlength_sampler.sample(&mut self.rng);
+            }
         }
 
-        self.report_progress_forced();
+        if self.is_leader_thread() {
+            self.report_progress_forced();
+        }
     }
 
     fn setup_local_state_for_new_epoch(&mut self) {
@@ -222,7 +229,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
         let new_weight = self.algo.weight_function.get(new_degree);
         let old_weight = info.weight.fetch_max(new_weight, Ordering::AcqRel);
 
-        if old_weight >= new_weight {
+        if unlikely(old_weight >= new_weight) {
             // this can happen if another thread race us to this point; but not an issue,
             // since the other thread will take care of the "fallout"
             return;
@@ -274,7 +281,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
         let now = Instant::now();
         let duration = now.duration_since(self.instant_last_report);
 
-        if duration.as_secs_f64() < 0.2 {
+        if likely(duration.as_secs_f64() < 0.2) {
             return;
         }
 
