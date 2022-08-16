@@ -1,12 +1,12 @@
 use super::{proposal_list::Writer, *};
 use crate::algorithm::algo_parallel_poly_pa::proposal_list::Sampler;
 use itertools::Itertools;
-use std::intrinsics::{likely, unlikely};
+use std::intrinsics::unlikely;
 use std::ops::Range;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
 
+use crate::algorithm::algo_parallel_poly_pa::reports::Reporter;
 use hurdles::Barrier;
 
 pub struct Worker<R: Rng + Send + Sync> {
@@ -21,17 +21,18 @@ pub struct Worker<R: Rng + Send + Sync> {
     barrier: Barrier,
 
     hosts_linked_in_epoch: Vec<Node>,
+    new_nodes: Vec<Node>,
 
     epoch_nodes: Range<usize>,
 
+    previous_weight_estimate: f64,
     total_weight_at_epoch_begin: f64,
     total_weight: f64,
     max_degree: Node,
-
-    instant_last_report: Instant,
-    instant_start: Instant,
+    wmax: f64,
 
     epoch_id: usize,
+    reporter: Option<Reporter>,
 }
 
 impl<R: Rng + Send + Sync> Worker<R> {
@@ -47,7 +48,16 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
         let epoch_nodes = 0..algo.num_seed_nodes;
 
-        let now = Instant::now();
+        let reporter = if rank == 0 {
+            Some(Reporter::new(algo.num_total_nodes))
+        } else {
+            None
+        };
+
+        let node_capacity =
+            (5.0 * (algo.num_total_nodes as f64).sqrt() / (num_threads as f64)).max(1000.) as usize;
+
+        let host_capacity = node_capacity * algo.initial_degree;
 
         Self {
             rank,
@@ -59,98 +69,97 @@ impl<R: Rng + Send + Sync> Worker<R> {
             proposal_sampler,
 
             barrier,
+            reporter,
 
-            hosts_linked_in_epoch: Vec::with_capacity(10000),
+            new_nodes: Vec::with_capacity(node_capacity),
+            hosts_linked_in_epoch: Vec::with_capacity(host_capacity),
 
             epoch_nodes,
 
+            wmax: f64::NAN,
             total_weight_at_epoch_begin: f64::NAN,
             total_weight: f64::NAN,
             max_degree: 0,
 
             epoch_id: 0,
-            instant_start: now,
-            instant_last_report: now,
+
+            previous_weight_estimate: 0.0,
         }
     }
 
     pub fn run(&mut self) {
-        self.algo.runlength_sampler.sample(&mut self.rng);
-
         loop {
-            self.barrier.wait();
-
             self.setup_local_state_for_new_epoch();
 
-            {
-                self.phase1_sample_independent_hosts();
-            }
+            self.phase1_sample_independent_hosts();
 
+            ////////////////////////////////////////////////////////////////////////////////////////
             self.barrier.wait();
 
-            {
-                self.phase2_update_proposal_list();
+            (self.epoch_nodes.end, self.previous_weight_estimate) =
+                self.algo.runlength_sampler.result(); // end now points to the node with a dependence
 
-                self.algo.total_weight.fetch_add(
-                    self.total_weight - self.total_weight_at_epoch_begin,
-                    Ordering::AcqRel,
-                );
+            self.phase2_update_proposal_list();
 
-                self.proposal_writer.free_unfinished_range();
-            }
+            self.algo.total_weight.fetch_add(
+                self.total_weight - self.total_weight_at_epoch_begin,
+                Ordering::AcqRel,
+            );
 
+            self.proposal_writer.free_unfinished_range();
+
+            ////////////////////////////////////////////////////////////////////////////////////////
             self.barrier.wait();
 
-            {
-                if self.is_leader_thread() {
-                    self.phase3_compaction_and_sampling();
-                    self.algo.runlength_sampler.setup_epoch(
-                        self.epoch_nodes.end,
-                        self.algo.num_total_nodes,
-                        self.algo.max_degree.load(),
-                        self.algo.total_weight.load(Ordering::Acquire),
-                    )
-                }
-
-                if self.rank + 1 == self.num_threads {
-                    self.report_progress_sometimes();
-                }
-
-                if self.epoch_nodes.end >= self.algo.num_total_nodes {
-                    break;
-                }
+            if let Some(reporter) = self.reporter.as_mut() {
+                reporter.update_epoch(self.epoch_id, self.epoch_nodes.clone());
+                reporter.report_progress_sometimes();
             }
 
-            self.barrier.wait();
+            self.algo.runlength_sampler.setup_epoch(
+                self.epoch_nodes.end,
+                self.algo.num_total_nodes,
+                self.algo.max_degree.load(),
+                self.algo.total_weight.load(Ordering::Acquire),
+            );
 
-            {
-                self.proposal_sampler.update_end();
-                self.algo.runlength_sampler.sample(&mut self.rng);
+            self.proposal_sampler.update_end();
+
+            if self.is_leader_thread() {
+                self.assert_correct_degree_sum();
+            }
+
+            if self.epoch_nodes.end >= self.algo.num_total_nodes {
+                break;
             }
         }
 
-        if self.is_leader_thread() {
-            self.report_progress_forced();
+        if let Some(reporter) = self.reporter.as_mut() {
+            reporter.report_progress_forced();
         }
-    }
-
-    fn setup_local_state_for_new_epoch(&mut self) {
-        self.epoch_nodes = self.epoch_nodes.end..self.algo.runlength_sampler.result();
-        self.epoch_id += 1;
-
-        self.total_weight_at_epoch_begin = self.algo.total_weight.load(Ordering::Acquire);
-        self.total_weight = self.total_weight_at_epoch_begin;
-        self.max_degree = self.algo.max_degree.load();
     }
 
     fn phase1_sample_independent_hosts(&mut self) {
-        let start_node = self.epoch_nodes.start + self.rank;
+        let start_node = if self.is_leader_thread() {
+            self.sample_dependent_node(self.epoch_nodes.start);
+            self.epoch_nodes.start + self.num_threads
+        } else {
+            self.epoch_nodes.start + self.rank
+        };
+
         let mut hosts = std::mem::take(&mut self.hosts_linked_in_epoch);
 
-        assert!(hosts.is_empty());
+        for node in (start_node..self.epoch_nodes.end).step_by(self.num_threads) {
+            if !self.algo.runlength_sampler.continue_with_node(
+                &mut self.rng,
+                node,
+                self.algo.initial_degree,
+            ) {
+                break;
+            }
 
-        for _ in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
             self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
+            self.new_nodes.push(node);
         }
 
         self.hosts_linked_in_epoch = hosts;
@@ -193,16 +202,40 @@ impl<R: Rng + Send + Sync> Worker<R> {
         self.rng.gen::<u64>() < (excess * wmax_scaled) as u64
     }
 
+    fn setup_local_state_for_new_epoch(&mut self) {
+        self.epoch_nodes = self.epoch_nodes.end..self.algo.num_total_nodes;
+        self.epoch_id += 1;
+
+        self.total_weight_at_epoch_begin = self.algo.total_weight.load(Ordering::Acquire);
+        self.total_weight = self.total_weight_at_epoch_begin;
+        self.max_degree = self.algo.max_degree.load();
+        self.wmax = self.algo.wmax.load(Ordering::Acquire);
+
+        debug_assert!(self.hosts_linked_in_epoch.is_empty());
+        debug_assert!(self.new_nodes.is_empty());
+    }
+
     fn phase2_update_proposal_list(&mut self) {
         let initial_degree = self.algo.initial_degree;
 
+        // discard nodes beyond epoch's end
+        {
+            let num_keep_nodes = self
+                .new_nodes
+                .iter()
+                .filter(|&&u| u < self.epoch_nodes.end)
+                .count();
+
+            self.hosts_linked_in_epoch
+                .truncate(num_keep_nodes * self.algo.initial_degree);
+
+            self.new_nodes.truncate(num_keep_nodes);
+        }
+
         let host_degree_increases = self.hosts_linked_in_epoch.iter().copied().counts();
 
-        let first_node = self.epoch_nodes.start + self.rank;
-        let own_degree_increases = (first_node..self.epoch_nodes.end)
-            .step_by(self.num_threads)
-            .into_iter()
-            .map(|u| (u, initial_degree));
+        let new_nodes = std::mem::take(&mut self.new_nodes);
+        let own_degree_increases = new_nodes.iter().map(|&u| (u, initial_degree));
 
         own_degree_increases
             .chain(host_degree_increases.into_iter())
@@ -210,8 +243,13 @@ impl<R: Rng + Send + Sync> Worker<R> {
                 self.increase_degree_of_node(node, deg_inc, self.epoch_nodes.end as f64)
             });
 
+        self.new_nodes = new_nodes;
+
         self.hosts_linked_in_epoch.clear();
+        self.new_nodes.clear();
+
         self.algo.max_degree.fetch_max(self.max_degree);
+        self.algo.wmax.fetch_max(self.wmax, Ordering::AcqRel);
     }
 
     fn increase_degree_of_node(
@@ -244,13 +282,11 @@ impl<R: Rng + Send + Sync> Worker<R> {
                 .fetch_update(|old| if old >= count { None } else { Some(count) })
         {
             self.proposal_writer.push(node, count - old_count);
+            self.wmax = self.wmax.max(new_weight / count as f64);
         }
     }
 
-    fn phase3_compaction_and_sampling(&mut self) {
-        self.algo.proposal_list.compact_unfinished_ranges();
-        self.phase3_sample_collision();
-
+    fn assert_correct_degree_sum(&self) {
         debug_assert_eq!(
             self.compute_degree_sum(),
             self.algo.num_seed_nodes
@@ -258,54 +294,12 @@ impl<R: Rng + Send + Sync> Worker<R> {
         );
     }
 
-    fn phase3_sample_collision(&mut self) {
-        let mut hosts = Vec::with_capacity(self.algo.initial_degree);
+    fn sample_dependent_node(&mut self, new_node: Node) {
+        self.new_nodes.push(new_node);
 
-        // TODO: missing increased sampling odds for single host
-        let last_node = self.epoch_nodes.end - 1;
-
-        self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
-
-        self.algo
-            .sequential_set_degree(last_node, self.algo.initial_degree);
-        self.algo
-            .sequential_update_node_counts_in_proposal_list(last_node);
-
-        for h in hosts {
-            self.algo.sequential_increase_degree(h);
-            self.algo.sequential_update_node_counts_in_proposal_list(h);
-        }
-    }
-
-    fn report_progress_sometimes(&mut self) {
-        let now = Instant::now();
-        let duration = now.duration_since(self.instant_last_report);
-
-        if likely(duration.as_secs_f64() < 0.2) {
-            return;
-        }
-
-        self.report_progress_now(now);
-    }
-
-    fn report_progress_forced(&mut self) {
-        let now = Instant::now();
-        self.report_progress_now(now);
-    }
-
-    fn report_progress_now(&mut self, now: Instant) {
-        let elasped_ms = now.duration_since(self.instant_start).as_millis();
-        self.instant_last_report = now;
-
-        println!(
-            "{:>7}ms Epoch {:>6} from {:>9} to {:>9} ({:>5.1} %); len: {:>5}",
-            elasped_ms,
-            self.epoch_id,
-            self.epoch_nodes.start,
-            self.epoch_nodes.end,
-            100.0 * self.epoch_nodes.end as f64 / self.algo.num_total_nodes as f64,
-            self.epoch_nodes.len()
-        );
+        let mut hosts = std::mem::take(&mut self.hosts_linked_in_epoch);
+        self.sample_hosts(&mut hosts, new_node, self.algo.initial_degree);
+        self.hosts_linked_in_epoch = hosts;
     }
 
     #[inline]

@@ -1,11 +1,13 @@
-const UNINITIALIZED: Node = Node::MAX;
-const BLOCK_SIZE: usize = 128;
+#![allow(dead_code)]
 
 use super::*;
 use crossbeam::atomic::AtomicCell;
 use itertools::Itertools;
 use std::intrinsics::likely;
 use std::ops::Range;
+
+const UNINITIALIZED: Node = Node::MAX;
+const BLOCK_SIZE: usize = 32;
 
 struct AtomicBlockInfo {
     begin: AtomicCell<usize>,
@@ -36,7 +38,7 @@ pub(super) struct ProposalList {
 
 impl ProposalList {
     pub fn new(size: usize, num_threads: usize) -> Self {
-        let n = size + 2 * num_threads * BLOCK_SIZE;
+        let n = size + 10 * num_threads * BLOCK_SIZE * ((size as f64).sqrt().ceil() as usize);
 
         let mut proposal_list = Vec::with_capacity(n);
         for _ in 0..n {

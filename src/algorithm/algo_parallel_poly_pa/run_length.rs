@@ -1,6 +1,5 @@
 use super::*;
 use crate::weight_function::Regime;
-use rand_distr::Geometric;
 
 const BLOCK_LEN: usize = 100;
 
@@ -48,7 +47,9 @@ impl RunlengthSampler {
         self.lower.store(lower);
         self.real_lower.store(lower);
 
-        self.upper.store(upper - 1);
+        let _ = self
+            .upper
+            .fetch_update(|u| if u <= lower { Some(upper) } else { None });
 
         self.total_weight.store(total_weight, Ordering::Release);
         self.max_degree.store(max_degree);
@@ -56,6 +57,7 @@ impl RunlengthSampler {
             .store(self.weight_function.get(max_degree), Ordering::Release);
     }
 
+    #[allow(dead_code)]
     pub(super) fn sample(&self, rng: &mut impl Rng) {
         loop {
             let start_node = self.lower.fetch_add(BLOCK_LEN);
@@ -74,8 +76,32 @@ impl RunlengthSampler {
     }
 
     /// In a parallel context, the result is only valid if there's a barrier between sample and result.
-    pub(super) fn result(&self) -> Node {
-        self.upper.load() + 1
+    pub(super) fn result(&self) -> (Node, f64) {
+        let upper_bound = self.upper.load();
+
+        (
+            upper_bound,
+            self.total_weight_and_upper_bound_for(upper_bound).1,
+        )
+    }
+
+    pub(super) fn continue_with_node(
+        &self,
+        rng: &mut impl Rng,
+        node: Node,
+        sampling_attempts: usize,
+    ) -> bool {
+        if self.upper.load() <= node {
+            return false;
+        }
+
+        if self.is_independent_run(rng, node, sampling_attempts) {
+            return true;
+        }
+
+        self.upper.fetch_min(node);
+
+        false
     }
 
     fn is_independent_run(
@@ -84,20 +110,21 @@ impl RunlengthSampler {
         node: usize,
         sampling_attempts: usize,
     ) -> bool {
-        let prob_is_independent = self.probability_is_independent(node);
-
-        let run_length = Geometric::new(1.0 - prob_is_independent)
-            .unwrap()
-            .sample(rng);
-
-        run_length > sampling_attempts as u64
+        let prob_single_is_independent = self.probability_is_independent(node);
+        let prob_all_independent = prob_single_is_independent.powi(sampling_attempts as i32);
+        rng.gen_bool(prob_all_independent)
     }
 
-    fn probability_is_independent(&self, node: usize) -> f64 {
+    fn probability_is_independent(&self, node: Node) -> f64 {
+        let (total_weight, upper_bound) = self.total_weight_and_upper_bound_for(node);
+        total_weight / upper_bound
+    }
+
+    pub(super) fn total_weight_and_upper_bound_for(&self, node: Node) -> (f64, f64) {
         let nodes_in_epoch = node - self.real_lower.load();
         let hosts_in_epoch = nodes_in_epoch * self.initial_degree;
 
-        let total_weight = self.total_weight.load(Ordering::Acquire);
+        let total_weight = self.total_weight.load(Ordering::Relaxed);
 
         let upper_bound_weight_increase = match self.weight_function.regime() {
             Regime::Sublinear => {
@@ -115,6 +142,6 @@ impl RunlengthSampler {
             Regime::Linear => 2.0 * hosts_in_epoch as f64,
         };
 
-        total_weight / (total_weight + upper_bound_weight_increase)
+        (total_weight, total_weight + upper_bound_weight_increase)
     }
 }

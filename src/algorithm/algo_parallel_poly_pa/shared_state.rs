@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::*;
 use crate::algorithm::algo_parallel_poly_pa::run_length::RunlengthSampler;
 use crossbeam::atomic::AtomicCell;
