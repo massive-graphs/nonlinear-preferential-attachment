@@ -49,7 +49,7 @@ impl RunlengthSampler {
 
         let _ = self
             .upper
-            .fetch_update(|u| if u < lower { Some(upper - 1) } else { None });
+            .fetch_update(|u| if u <= lower { Some(upper) } else { None });
 
         self.total_weight.store(total_weight, Ordering::Release);
         self.max_degree.store(max_degree);
@@ -76,8 +76,13 @@ impl RunlengthSampler {
     }
 
     /// In a parallel context, the result is only valid if there's a barrier between sample and result.
-    pub(super) fn result(&self) -> Node {
-        self.upper.load() + 1
+    pub(super) fn result(&self) -> (Node, f64) {
+        let upper_bound = self.upper.load();
+
+        (
+            upper_bound,
+            self.total_weight_and_upper_bound_for(upper_bound).1,
+        )
     }
 
     pub(super) fn continue_with_node(
@@ -110,11 +115,16 @@ impl RunlengthSampler {
         rng.gen_bool(prob_all_independent)
     }
 
-    fn probability_is_independent(&self, node: usize) -> f64 {
+    fn probability_is_independent(&self, node: Node) -> f64 {
+        let (total_weight, upper_bound) = self.total_weight_and_upper_bound_for(node);
+        total_weight / upper_bound
+    }
+
+    pub(super) fn total_weight_and_upper_bound_for(&self, node: Node) -> (f64, f64) {
         let nodes_in_epoch = node - self.real_lower.load();
         let hosts_in_epoch = nodes_in_epoch * self.initial_degree;
 
-        let total_weight = self.total_weight.load(Ordering::Acquire);
+        let total_weight = self.total_weight.load(Ordering::Relaxed);
 
         let upper_bound_weight_increase = match self.weight_function.regime() {
             Regime::Sublinear => {
@@ -132,6 +142,6 @@ impl RunlengthSampler {
             Regime::Linear => 2.0 * hosts_in_epoch as f64,
         };
 
-        total_weight / (total_weight + upper_bound_weight_increase)
+        (total_weight, total_weight + upper_bound_weight_increase)
     }
 }
