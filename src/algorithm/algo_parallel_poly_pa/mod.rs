@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod proposal_list;
+mod reports;
 mod run_length;
 mod shared_state;
 mod worker;

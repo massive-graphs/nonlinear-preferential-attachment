@@ -1,11 +1,13 @@
-const UNINITIALIZED: Node = Node::MAX;
-const BLOCK_SIZE: usize = 128;
+#![allow(dead_code)]
 
 use super::*;
 use crossbeam::atomic::AtomicCell;
 use itertools::Itertools;
 use std::intrinsics::likely;
 use std::ops::Range;
+
+const UNINITIALIZED: Node = Node::MAX;
+const BLOCK_SIZE: usize = 32;
 
 struct AtomicBlockInfo {
     begin: AtomicCell<usize>,
