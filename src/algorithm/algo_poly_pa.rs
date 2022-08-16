@@ -1,5 +1,4 @@
 use super::*;
-use rand::prelude::SliceRandom;
 use std::cell::Cell;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
