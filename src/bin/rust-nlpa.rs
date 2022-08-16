@@ -31,10 +31,12 @@ fn execute<R: rand::Rng, T: Algorithm<R>>(rng: R, opt: &Parameters) {
             report_distribution(&distr, &mut stdout().lock()).unwrap();
         }
 
-        assert_eq!(
-            degrees.iter().copied().sum::<usize>(),
-            opt.seed_nodes.unwrap() + 2 * opt.nodes * opt.initial_degree
-        );
+        /*
+                assert_eq!(
+                    degrees.iter().copied().sum::<usize>(),
+                    opt.seed_nodes.unwrap() + 2 * opt.nodes * opt.initial_degree
+                );
+        s         */
 
         runtime
     };

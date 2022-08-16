@@ -80,6 +80,15 @@ impl<R: Rng + Send + Sync> Worker<R> {
         loop {
             self.setup_local_state_for_new_epoch();
 
+            assert!(self.hosts_linked_in_epoch.is_empty());
+
+            if self.is_leader_thread() && self.epoch_id > 1 {
+                self.new_nodes.push(self.epoch_nodes.start - 1);
+                let mut hosts = std::mem::take(&mut self.hosts_linked_in_epoch);
+                self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
+                self.hosts_linked_in_epoch = hosts;
+            }
+
             {
                 self.phase1_sample_independent_hosts();
             }
@@ -101,27 +110,28 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
             self.barrier.wait();
 
-            {
+            if false {
                 if self.is_leader_thread() {
                     self.phase3_compaction_and_sampling();
-                    self.algo.runlength_sampler.setup_epoch(
-                        self.epoch_nodes.end,
-                        self.algo.num_total_nodes,
-                        self.algo.max_degree.load(),
-                        self.algo.total_weight.load(Ordering::Acquire),
-                    )
                 }
 
                 if self.rank + 1 == self.num_threads {
                     self.report_progress_sometimes();
                 }
-
-                if self.epoch_nodes.end >= self.algo.num_total_nodes {
-                    break;
-                }
             }
 
-            self.barrier.wait();
+            self.algo.runlength_sampler.setup_epoch(
+                self.epoch_nodes.end,
+                self.algo.num_total_nodes,
+                self.algo.max_degree.load(),
+                self.algo.total_weight.load(Ordering::Acquire),
+            );
+
+            if self.epoch_nodes.end >= self.algo.num_total_nodes {
+                break;
+            }
+
+            //self.barrier.wait();
 
             {
                 self.proposal_sampler.update_end();
@@ -145,8 +155,6 @@ impl<R: Rng + Send + Sync> Worker<R> {
     fn phase1_sample_independent_hosts(&mut self) {
         let start_node = self.epoch_nodes.start + self.rank;
         let mut hosts = std::mem::take(&mut self.hosts_linked_in_epoch);
-
-        assert!(hosts.is_empty());
 
         for node in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
             if !self.algo.runlength_sampler.continue_with_node(

@@ -47,7 +47,9 @@ impl RunlengthSampler {
         self.lower.store(lower);
         self.real_lower.store(lower);
 
-        self.upper.store(upper - 1);
+        let _ = self
+            .upper
+            .fetch_update(|u| if u < lower { Some(upper - 1) } else { None });
 
         self.total_weight.store(total_weight, Ordering::Release);
         self.max_degree.store(max_degree);
