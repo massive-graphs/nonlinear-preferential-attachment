@@ -13,7 +13,7 @@ rand_distr = "0.4"
 pcg_rand = "0.13"
 structopt = "0.3"
 itertools = "0.10"
-dynamic-weighted-index = { path = "../dynamic-weighted-index" }
+dynamic-weighted-index = { path = "ext/dynamic-weighted-index" }
 crossbeam = "0.8"
 fxhash = "0.2.1"
 atomic_float = "0.1.0"
