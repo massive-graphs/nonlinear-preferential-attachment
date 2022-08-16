@@ -8,6 +8,7 @@ pub struct AlgoDynamicWeightedIndex<R: Rng> {
     num_rand_nodes: Node,
     initial_degree: Node,
     without_replacement: bool,
+    resample: bool,
 
     degrees: Vec<Node>,
     dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex,
@@ -29,7 +30,6 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
         weight_function: WeightFunction,
     ) -> Self {
         assert_eq!(num_threads, 1);
-        assert!(!resample);
 
         Self {
             rng,
@@ -38,6 +38,7 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
             initial_degree,
             without_replacement,
             weight_function,
+            resample,
 
             degrees: vec![0; num_seed_nodes + num_rand_nodes],
             dyn_index: ::dynamic_weighted_index::DynamicWeightedIndex::new(
@@ -56,11 +57,24 @@ impl<R: Rng> Algorithm<R> for AlgoDynamicWeightedIndex<R> {
         let mut hosts = vec![0; self.initial_degree as usize];
 
         for new_node in self.num_seed_nodes..(self.num_seed_nodes + self.num_rand_nodes) {
-            for h in &mut hosts {
-                *h = self.dyn_index.sample(&mut self.rng).unwrap();
-                if self.without_replacement && self.initial_degree > 1 {
-                    self.dyn_index.remove_weight(*h);
-                };
+            if self.without_replacement && self.resample && self.initial_degree > 1 {
+                for i in 0..self.initial_degree {
+                    let host = loop {
+                        let host = self.dyn_index.sample(&mut self.rng).unwrap();
+                        if !hosts[0..i].contains(&host) {
+                            break host;
+                        }
+                    };
+
+                    hosts[i] = host;
+                }
+            } else {
+                for h in &mut hosts {
+                    *h = self.dyn_index.sample(&mut self.rng).unwrap();
+                    if self.without_replacement && self.initial_degree > 1 {
+                        self.dyn_index.remove_weight(*h);
+                    };
+                }
             }
 
             // update neighbors
