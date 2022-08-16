@@ -15,7 +15,6 @@ use atomic_float::AtomicF64;
 use crossbeam::atomic::AtomicCell;
 use itertools::Itertools;
 use rand::SeedableRng;
-use rand_distr::Distribution;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;

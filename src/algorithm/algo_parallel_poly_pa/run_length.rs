@@ -1,6 +1,5 @@
 use super::*;
 use crate::weight_function::Regime;
-use rand_distr::Geometric;
 
 const BLOCK_LEN: usize = 100;
 
@@ -56,6 +55,7 @@ impl RunlengthSampler {
             .store(self.weight_function.get(max_degree), Ordering::Release);
     }
 
+    #[allow(dead_code)]
     pub(super) fn sample(&self, rng: &mut impl Rng) {
         loop {
             let start_node = self.lower.fetch_add(BLOCK_LEN);
@@ -76,6 +76,25 @@ impl RunlengthSampler {
     /// In a parallel context, the result is only valid if there's a barrier between sample and result.
     pub(super) fn result(&self) -> Node {
         self.upper.load() + 1
+    }
+
+    pub(super) fn continue_with_node(
+        &self,
+        rng: &mut impl Rng,
+        node: Node,
+        sampling_attempts: usize,
+    ) -> bool {
+        if self.upper.load() <= node {
+            return false;
+        }
+
+        if self.is_independent_run(rng, node, sampling_attempts) {
+            return true;
+        }
+
+        self.upper.fetch_min(node);
+
+        false
     }
 
     fn is_independent_run(

@@ -21,6 +21,7 @@ pub struct Worker<R: Rng + Send + Sync> {
     barrier: Barrier,
 
     hosts_linked_in_epoch: Vec<Node>,
+    new_nodes: Vec<Node>,
 
     epoch_nodes: Range<usize>,
 
@@ -61,6 +62,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
             barrier,
 
             hosts_linked_in_epoch: Vec::with_capacity(10000),
+            new_nodes: Vec::with_capacity(10000),
 
             epoch_nodes,
 
@@ -75,11 +77,7 @@ impl<R: Rng + Send + Sync> Worker<R> {
     }
 
     pub fn run(&mut self) {
-        self.algo.runlength_sampler.sample(&mut self.rng);
-
         loop {
-            self.barrier.wait();
-
             self.setup_local_state_for_new_epoch();
 
             {
@@ -89,6 +87,8 @@ impl<R: Rng + Send + Sync> Worker<R> {
             self.barrier.wait();
 
             {
+                self.epoch_nodes.end = self.algo.runlength_sampler.result();
+
                 self.phase2_update_proposal_list();
 
                 self.algo.total_weight.fetch_add(
@@ -125,7 +125,6 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
             {
                 self.proposal_sampler.update_end();
-                self.algo.runlength_sampler.sample(&mut self.rng);
             }
         }
 
@@ -149,8 +148,17 @@ impl<R: Rng + Send + Sync> Worker<R> {
 
         assert!(hosts.is_empty());
 
-        for _ in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
+        for node in (start_node..self.epoch_nodes.end - 1).step_by(self.num_threads) {
+            if !self.algo.runlength_sampler.continue_with_node(
+                &mut self.rng,
+                node,
+                self.algo.initial_degree,
+            ) {
+                break;
+            }
+
             self.sample_hosts(&mut hosts, self.epoch_nodes.start, self.algo.initial_degree);
+            self.new_nodes.push(node);
         }
 
         self.hosts_linked_in_epoch = hosts;
@@ -196,13 +204,24 @@ impl<R: Rng + Send + Sync> Worker<R> {
     fn phase2_update_proposal_list(&mut self) {
         let initial_degree = self.algo.initial_degree;
 
+        // discard nodes beyond epoch's end
+        {
+            let num_keep_nodes = self
+                .new_nodes
+                .iter()
+                .filter(|&&u| u + 1 < self.epoch_nodes.end)
+                .count();
+
+            self.hosts_linked_in_epoch
+                .truncate(num_keep_nodes * self.algo.initial_degree);
+
+            self.new_nodes.truncate(num_keep_nodes);
+        }
+
         let host_degree_increases = self.hosts_linked_in_epoch.iter().copied().counts();
 
-        let first_node = self.epoch_nodes.start + self.rank;
-        let own_degree_increases = (first_node..self.epoch_nodes.end)
-            .step_by(self.num_threads)
-            .into_iter()
-            .map(|u| (u, initial_degree));
+        let new_nodes = std::mem::take(&mut self.new_nodes);
+        let own_degree_increases = new_nodes.iter().map(|&u| (u, initial_degree));
 
         own_degree_increases
             .chain(host_degree_increases.into_iter())
@@ -210,7 +229,10 @@ impl<R: Rng + Send + Sync> Worker<R> {
                 self.increase_degree_of_node(node, deg_inc, self.epoch_nodes.end as f64)
             });
 
+        self.new_nodes = new_nodes;
+
         self.hosts_linked_in_epoch.clear();
+        self.new_nodes.clear();
         self.algo.max_degree.fetch_max(self.max_degree);
     }
 

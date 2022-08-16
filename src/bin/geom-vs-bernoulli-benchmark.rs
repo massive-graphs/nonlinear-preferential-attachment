@@ -81,7 +81,7 @@ fn main() {
     for _ in 0..NUM_REPEATS {
         for exp_len in 2..MAX_EXPECTED_LEN {
             let geom = benchmark_geom(&mut rng, exp_len);
-            let pbern = benchmark_pow_bernoulli(&mut rng, exp_len);
+            let _pbern = benchmark_pow_bernoulli(&mut rng, exp_len);
             let bern = benchmark_bernoulli(&mut rng, exp_len);
             println!(
                 "fac,{},{}",
