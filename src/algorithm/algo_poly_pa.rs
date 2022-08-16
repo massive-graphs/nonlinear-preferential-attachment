@@ -1,15 +1,25 @@
 use super::*;
-use rand::prelude::SliceRandom;
 use std::cell::Cell;
 
 const SCALE: f64 = 2.0 * (1u64 << 63) as f64;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 struct NodeInfo {
     degree: Node,
     count: Node,
     weight: f64,
     excess: f64,
+}
+
+impl Default for NodeInfo {
+    fn default() -> Self {
+        Self {
+            degree: 0,
+            count: 1,
+            weight: 0.0,
+            excess: 0.0,
+        }
+    }
 }
 
 pub struct AlgoPolyPa<R: Rng> {
@@ -62,7 +72,7 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
 
             total_weight: 0.0,
             nodes: vec![Default::default(); num_total_nodes],
-            proposal_list: Vec::with_capacity(7 * num_total_nodes / 3),
+            proposal_list: Vec::with_capacity(4 * num_total_nodes / 3),
 
             num_current_nodes: 0,
             wmax: 0.0,
@@ -135,7 +145,7 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
 
                             node
                         } else {
-                            let new_node = self.sample_host(|u| {
+                            let new_node = self.sample_host(new_node, |u| {
                                 prev_hosts.iter().any(|&(p, _)| p == u) || hosts.contains(&u)
                             });
                             total_weight -= self.nodes[new_node].weight;
@@ -147,14 +157,14 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
                 } else {
                     hosts.clear();
                     while hosts.len() < self.initial_degree {
-                        let new_node = self.sample_host(|u| hosts.contains(&u));
+                        let new_node = self.sample_host(new_node, |u| hosts.contains(&u));
                         hosts.push(new_node);
                     }
                 }
             } else {
                 hosts.clear();
                 while hosts.len() < self.initial_degree {
-                    let new_node = self.sample_host(|_| false);
+                    let new_node = self.sample_host(new_node, |_| false);
                     hosts.push(new_node);
                 }
             }
@@ -194,20 +204,6 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
         );
 
         println!("Wmax: {}", self.wmax);
-
-        println!(
-            "Wmax-real: {:?}",
-            self.nodes
-                .iter()
-                .map(|i| (i.degree, i.weight / i.count as f64))
-                .fold((0, 0.0), |s, x| -> (Node, f64) {
-                    if s.1 > x.1 {
-                        s
-                    } else {
-                        x
-                    }
-                })
-        );
     }
 
     fn degrees(&self) -> Vec<Node> {
@@ -216,11 +212,22 @@ impl<R: Rng> Algorithm<R> for AlgoPolyPa<R> {
 }
 
 impl<R: Rng> AlgoPolyPa<R> {
-    fn sample_host(&mut self, reject_early: impl Fn(Node) -> bool) -> Node {
+    fn sample_host(&mut self, new_node: Node, reject_early: impl Fn(Node) -> bool) -> Node {
         debug_assert!(!self.proposal_list.is_empty());
         loop {
             self.num_samples.update(|x| x + 1);
-            let proposal = *self.proposal_list.as_slice().choose(&mut self.rng).unwrap() as usize;
+
+            let index = self.rng.gen_range(0..new_node + self.proposal_list.len());
+
+            let proposal = if index < new_node {
+                index
+            } else {
+                self.proposal_list[index - new_node]
+            };
+
+            unsafe {
+                std::intrinsics::prefetch_read_data(self.nodes.as_ptr().add(proposal), 1);
+            }
 
             if reject_early(proposal) {
                 continue;
@@ -231,7 +238,6 @@ impl<R: Rng> AlgoPolyPa<R> {
             let info = self.nodes[proposal];
 
             let accept = self.rng.gen::<u64>() < (info.excess * self.wmax_scaled) as u64;
-            //let accept = rng.gen_bool(info.excess / self.wmax);
 
             if accept {
                 break proposal;
