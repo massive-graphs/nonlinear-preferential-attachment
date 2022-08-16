@@ -84,13 +84,9 @@ impl RunlengthSampler {
         node: usize,
         sampling_attempts: usize,
     ) -> bool {
-        let prob_is_independent = self.probability_is_independent(node);
-
-        let run_length = Geometric::new(1.0 - prob_is_independent)
-            .unwrap()
-            .sample(rng);
-
-        run_length > sampling_attempts as u64
+        let prob_single_is_independent = self.probability_is_independent(node);
+        let prob_all_independent = prob_single_is_independent.powi(sampling_attempts as i32);
+        rng.gen_bool(prob_all_independent)
     }
 
     fn probability_is_independent(&self, node: usize) -> f64 {
